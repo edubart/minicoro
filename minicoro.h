@@ -79,7 +79,7 @@ typedef struct mco_coro mco_coro;
 typedef void (*mco_func)(mco_coro* co);
 
 /* Coroutine structure. */
-typedef struct mco_coro {
+struct mco_coro {
   mco_context ctx;
   mco_context back_ctx;
   uint8_t user_data[MCO_MAX_DATA_SIZE];
@@ -91,7 +91,7 @@ typedef struct mco_coro {
   uintptr_t usable_stack_size;
   void (*free_cb)(void* ptr, void* alloc_user_data);
   void* alloc_user_data;
-} mco_coro;
+};
 
 /* Structure used to initialize a coroutine. */
 typedef struct mco_desc {
@@ -206,7 +206,7 @@ static mco_result _mco_switch(mco_context* from, mco_context* to) {
   return MCO_SUCCESS;
 }
 
-static inline mco_result _mco_jumpin(mco_coro* co) {
+static mco_result _mco_jumpin(mco_coro* co) {
   /* Set the old coroutine to normal state and update it. */
   mco_coro* prev_co = mco_current_co;
   co->prev_co = prev_co;
@@ -219,7 +219,7 @@ static inline mco_result _mco_jumpin(mco_coro* co) {
   return _mco_switch(&co->back_ctx, &co->ctx);
 }
 
-static inline mco_result _mco_jumpout(mco_coro* co) {
+static mco_result _mco_jumpout(mco_coro* co) {
   /* Switch back to the previous running coroutine. */
   MCO_ASSERT(mco_current_co == co);
   mco_coro* prev_co = co->prev_co;
@@ -233,8 +233,13 @@ static inline mco_result _mco_jumpout(mco_coro* co) {
   return _mco_switch(&co->ctx, &co->back_ctx);
 }
 
+#if defined(_WIN64) || defined(_LP64) || defined(__LP64__)
 static void _mco_main(uint32_t lo, uint32_t hi) {
   mco_coro* co = (mco_coro*)(((uintptr_t)lo) | (((uintptr_t)hi) << 32)); /* Extract coroutine pointer. */
+#else
+static void _mco_main(uint32_t lo) {
+  mco_coro* co = (mco_coro*)((uintptr_t)lo); /* Extract coroutine pointer. */
+#endif
   co->func(co); /* Run the coroutine function. */
   co->state = MCO_DEAD; /* Coroutine finished successfully, set state to dead. */
   _mco_jumpout(co); /* Jump back to the old context */
@@ -250,12 +255,16 @@ static mco_result _mco_makectx(mco_coro* co) {
   ctx->uc_stack.ss_sp = co->stack_ptr;
   ctx->uc_stack.ss_size = co->usable_stack_size;
   uint32_t lo = (uint32_t)((uintptr_t)co);
+#if defined(_WIN64) || defined(_LP64) || defined(__LP64__)
   uint32_t hi = (uint32_t)(((uintptr_t)co)>>32);
   makecontext(ctx, (void (*)(void))_mco_main, 2, lo, hi);
+#else
+  makecontext(ctx, (void (*)(void))_mco_main, 1, lo);
+#endif
   return MCO_SUCCESS;
 }
 
-static inline uintptr_t _mco_align_forward(uintptr_t addr, uintptr_t align) {
+static uintptr_t _mco_align_forward(uintptr_t addr, uintptr_t align) {
   return (addr + (align-1)) & ~(align-1);
 }
 
