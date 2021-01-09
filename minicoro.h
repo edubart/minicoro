@@ -31,6 +31,10 @@ LICENSE
   #endif
 #endif
 
+#ifndef MCO_API
+#define MCO_API extern
+#endif
+
 #define _MCO_CTX_SIZE 1024 /* Must be enough to hold ucontext_t. */
 
 #ifndef MCO_MAX_DATA_SIZE
@@ -104,51 +108,51 @@ typedef struct mco_desc {
 } mco_desc;
 
 /* Retrieve size of allocation a coroutine, use this if you want to manually allocate. */
-uintptr_t mco_choose_stack_size(uintptr_t stacksize);
+MCO_API uintptr_t mco_choose_stack_size(uintptr_t stacksize);
 
 /* Initialize the coroutine. */
-mco_result mco_init(mco_coro* co, mco_desc desc);
+MCO_API mco_result mco_init(mco_coro* co, mco_desc desc);
 
 /* Uninitialize the coroutine. */
 /* The operation may fail if the coroutine is not dead or suspended, in this case, the operation is ignored. */
-mco_result mco_uninit(mco_coro* co);
+MCO_API mco_result mco_uninit(mco_coro* co);
 
 /* Create a new coroutine. It allocates and call mco_init. */
-mco_result mco_create(mco_coro** out_co, mco_desc desc);
+MCO_API mco_result mco_create(mco_coro** out_co, mco_desc desc);
 
 /* Uninitialize the coroutine and free all resources. */
 /* The operation may fail if the coroutine is not dead or suspended, in this case, the operation is ignored. */
-mco_result mco_destroy(mco_coro* co);
+MCO_API mco_result mco_destroy(mco_coro* co);
 
 /* Returns the status of the coroutine. */
-mco_state mco_status(mco_coro* co);
+MCO_API mco_state mco_status(mco_coro* co);
 
 /* Returns the running coroutine in the current thread. */
-mco_coro* mco_running();
+MCO_API mco_coro* mco_running();
 
 /* Starts or continues the execution of the coroutine. */
-mco_result mco_resume(mco_coro* co);
+MCO_API mco_result mco_resume(mco_coro* co);
 
 /* Suspends the execution of the coroutine. */
-mco_result mco_yield(mco_coro *co);
+MCO_API mco_result mco_yield(mco_coro *co);
 
 /* Set the coroutine user data. Use to pass results between yield and resume. */
-mco_result mco_set_user_data(mco_coro* co, const void* src, size_t len);
+MCO_API mco_result mco_set_user_data(mco_coro* co, const void* src, size_t len);
 
 /* Get the coroutine user data. Use to retrieve results between yield and resume. */
-mco_result mco_get_user_data(mco_coro* co, void* dest, size_t maxlen);
+MCO_API mco_result mco_get_user_data(mco_coro* co, void* dest, size_t maxlen);
 
 /* Get the coroutine user data size. */
-size_t mco_get_user_data_size();
+MCO_API size_t mco_get_user_data_size();
 
 /* Clear the coroutine user data. Call this to reset user data before a yield or resume. */
-void mco_reset_user_data(mco_coro* co);
+MCO_API void mco_reset_user_data(mco_coro* co);
 
 /* Shortcut for mco_get_user_data + mco_reset_user_data. Reset is called even on errors. */
-mco_result mco_get_and_reset_user_data(mco_coro* co, void* dest, size_t maxlen);
+MCO_API mco_result mco_get_and_reset_user_data(mco_coro* co, void* dest, size_t maxlen);
 
 /* Get a string description of result. */
-const char* mco_result_description(mco_result res);
+MCO_API const char* mco_result_description(mco_result res);
 
 #endif /* MINICORO_H */
 
