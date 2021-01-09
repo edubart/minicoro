@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 void coro_entry2(mco_coro* co2) {
-  mco_coro* co;
+  mco_coro* co = NULL;
 
   assert(mco_running() == co2);
   assert(mco_status(co2) == MCO_RUNNING);
@@ -19,7 +19,7 @@ void coro_entry2(mco_coro* co2) {
 }
 
 void coro_entry(mco_coro* co) {
-  char buffer[128];
+  char buffer[128] = {0};
   int ret;
   mco_coro* co2;
 
@@ -51,7 +51,8 @@ void coro_entry(mco_coro* co) {
   assert(mco_set_user_data(co, &ret, sizeof(ret)) == MCO_SUCCESS);
 
   /* Nested coroutine test */
-  assert(mco_create(&co2, (mco_desc){.func=coro_entry2}) == MCO_SUCCESS);
+  mco_desc desc = mco_desc_init(coro_entry2, 0);
+  assert(mco_create(&co2, &desc) == MCO_SUCCESS);
   assert(mco_set_user_data(co2, &co, sizeof(co)) == MCO_SUCCESS);
   assert(mco_resume(co2) == MCO_SUCCESS);
   assert(mco_resume(co2) == MCO_SUCCESS);
@@ -63,10 +64,11 @@ void coro_entry(mco_coro* co) {
 
 int main() {
   mco_coro* co;
-  int ret;
+  int ret = 0;
 
   /* Create coroutine */
-  assert(mco_create(&co, (mco_desc){.func=coro_entry}) == MCO_SUCCESS);
+  mco_desc desc = mco_desc_init(coro_entry, 0);
+  assert(mco_create(&co, &desc) == MCO_SUCCESS);
   assert(mco_status(co) == MCO_SUSPENDED);
 
   /* Set user data 1 */
@@ -95,5 +97,6 @@ int main() {
 
   /* Destroy */
   assert(mco_destroy(co) == MCO_SUCCESS);
+  printf("finished!\n");
   return 0;
 }

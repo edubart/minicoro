@@ -8,8 +8,6 @@ API but with C in mind.
 This is project is being developed mainly to be a coroutine backend
 for the [Nelua programming language](https://github.com/edubart/nelua-lang).
 
-**NOTE: This project is under development. At the moment it only work on POSIX systems.**
-
 # Features
 
 * Stackful asymmetric coroutines
@@ -84,7 +82,8 @@ static void fibonacci_coro(mco_coro* co) {
 int main() {
   /* Create the coroutine. */
   mco_coro* co;
-  mco_result res = mco_create(&co, (mco_desc){.func=fibonacci_coro});
+  mco_desc desc = mco_desc_init(fibonacci_coro, 0);
+  mco_result res = mco_create(&co, &desc);
   if(res != MCO_SUCCESS)
     fail("Failed to create coroutine", res);
 
@@ -101,7 +100,7 @@ int main() {
       fail("Failed to resume coroutine", res);
 
     /* Retrieve user data set in last coroutine yield. */
-    unsigned long ret;
+    unsigned long ret = 0;
     if(mco_get_user_data(co, &ret, sizeof(ret)) != MCO_SUCCESS)
       fail("Failed to retrieve coroutine user data", res);
     printf("fib %d = %lu\n", counter, ret);
