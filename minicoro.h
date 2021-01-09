@@ -1,14 +1,14 @@
 /*
-  minicoro.h -- Minimal asymmetric stackful coroutine in pure C99
+minicoro.h -- Minimal asymmetric stackful coroutine in pure C99
 
-  Project URL: https://github.com/edubart/minicoro
+Project URL: https://github.com/edubart/minicoro
 
-  Do this:
-    #define MINICORO_IMPL
-  before you include this file in *one* C file to create the implementation.
+Do this:
+  #define MINICORO_IMPL
+before you include this file in *one* C file to create the implementation.
 
-  LICENSE
-    MIT license, see end of file.
+LICENSE
+  MIT license, see end of file.
 */
 
 #ifndef MINICORO_H
@@ -56,20 +56,20 @@ typedef enum mco_state {
   MCO_SUSPENDED, /* The coroutine is suspended (in a call to yield, or it has not started running yet). */
 } mco_state;
 
-/* Coroutine error codes. */
-typedef enum mco_error {
+/* Coroutine result codes. */
+typedef enum mco_result {
   MCO_SUCCESS,
   MCO_INVALID_POINTER,
   MCO_NOT_SUSPENDED,
   MCO_NOT_RUNNING,
   MCO_MAKE_CONTEXT_ERROR,
   MCO_SWITCH_CONTEXT_ERROR,
-  MCO_NO_DATA,
+  MCO_NO_USER_DATA,
   MCO_NOT_ENOUGH_SPACE,
   MCO_OUT_OF_MEMORY,
   MCO_INVALID_ARGUMENTS,
   MCO_INVALID_OPERATION,
-} mco_error;
+} mco_result;
 
 typedef struct mco_context {
   uint8_t pad[_MCO_CTX_SIZE]; /* The real data is platform dependent. */
@@ -107,18 +107,18 @@ typedef struct mco_desc {
 uintptr_t mco_choose_stack_size(uintptr_t stacksize);
 
 /* Initialize the coroutine. */
-mco_error mco_init(mco_coro* co, mco_desc desc);
+mco_result mco_init(mco_coro* co, mco_desc desc);
 
 /* Uninitialize the coroutine. */
 /* The operation may fail if the coroutine is not dead or suspended, in this case, the operation is ignored. */
-mco_error mco_uninit(mco_coro* co);
+mco_result mco_uninit(mco_coro* co);
 
 /* Create a new coroutine. It allocates and call mco_init. */
-mco_error mco_create(mco_coro** out_co, mco_desc desc);
+mco_result mco_create(mco_coro** out_co, mco_desc desc);
 
 /* Uninitialize the coroutine and free all resources. */
 /* The operation may fail if the coroutine is not dead or suspended, in this case, the operation is ignored. */
-mco_error mco_destroy(mco_coro* co);
+mco_result mco_destroy(mco_coro* co);
 
 /* Returns the status of the coroutine. */
 mco_state mco_status(mco_coro* co);
@@ -127,16 +127,16 @@ mco_state mco_status(mco_coro* co);
 mco_coro* mco_running();
 
 /* Starts or continues the execution of the coroutine. */
-mco_error mco_resume(mco_coro* co);
+mco_result mco_resume(mco_coro* co);
 
 /* Suspends the execution of the coroutine. */
-mco_error mco_yield(mco_coro *co);
+mco_result mco_yield(mco_coro *co);
 
 /* Set the coroutine user data. Use to pass results between yield and resume. */
-mco_error mco_set_user_data(mco_coro* co, const void* src, size_t len);
+mco_result mco_set_user_data(mco_coro* co, const void* src, size_t len);
 
 /* Get the coroutine user data. Use to retrieve results between yield and resume. */
-mco_error mco_get_user_data(mco_coro* co, void* dest, size_t maxlen);
+mco_result mco_get_user_data(mco_coro* co, void* dest, size_t maxlen);
 
 /* Get the coroutine user data size. */
 size_t mco_get_user_data_size();
@@ -144,7 +144,11 @@ size_t mco_get_user_data_size();
 /* Clear the coroutine user data. Call this to reset user data before a yield or resume. */
 void mco_reset_user_data(mco_coro* co);
 
-mco_error mco_get_and_reset_user_data(mco_coro* co, void* dest, size_t maxlen);
+/* Shortcut for mco_get_user_data + mco_reset_user_data. Reset is called even on errors. */
+mco_result mco_get_and_reset_user_data(mco_coro* co, void* dest, size_t maxlen);
+
+/* Get a string description of result. */
+const char* mco_result_description(mco_result res);
 
 #endif /* MINICORO_H */
 
@@ -193,7 +197,7 @@ static void mco_free(void* ptr, void* user_data) {
 
 static _MCO_THREAD_LOCAL mco_coro* mco_current_co = NULL;
 
-static mco_error _mco_switch(mco_context* from, mco_context* to) {
+static mco_result _mco_switch(mco_context* from, mco_context* to) {
   if(swapcontext((ucontext_t*)from, (ucontext_t*)to) == -1) {
     MCO_LOG("swap context error");
     return MCO_SWITCH_CONTEXT_ERROR;
@@ -202,7 +206,7 @@ static mco_error _mco_switch(mco_context* from, mco_context* to) {
   return MCO_SUCCESS;
 }
 
-static inline mco_error _mco_jumpin(mco_coro* co) {
+static inline mco_result _mco_jumpin(mco_coro* co) {
   /* Set the old coroutine to normal state and update it. */
   mco_coro* prev_co = mco_current_co;
   co->prev_co = prev_co;
@@ -215,7 +219,7 @@ static inline mco_error _mco_jumpin(mco_coro* co) {
   return _mco_switch(&co->back_ctx, &co->ctx);
 }
 
-static inline mco_error _mco_jumpout(mco_coro* co) {
+static inline mco_result _mco_jumpout(mco_coro* co) {
   /* Switch back to the previous running coroutine. */
   MCO_ASSERT(mco_current_co == co);
   mco_coro* prev_co = co->prev_co;
@@ -236,7 +240,7 @@ static void _mco_main(uint32_t lo, uint32_t hi) {
   _mco_jumpout(co); /* Jump back to the old context */
 }
 
-static mco_error _mco_makectx(mco_coro* co) {
+static mco_result _mco_makectx(mco_coro* co) {
   ucontext_t* ctx = (ucontext_t*)&co->ctx;
   if(getcontext(ctx) != 0) {
     MCO_LOG("get context context");
@@ -266,7 +270,7 @@ uintptr_t mco_choose_stack_size(uintptr_t stacksize) {
   return stacksize;
 }
 
-mco_error mco_init(mco_coro* co, mco_desc desc) {
+mco_result mco_init(mco_coro* co, mco_desc desc) {
   /* We expect a function and valid stack size. */
   if(!desc.func || desc.stack_size == 0) {
     MCO_LOG("invalid function or stack size arguments while initializing coroutine");
@@ -286,7 +290,7 @@ mco_error mco_init(mco_coro* co, mco_desc desc) {
   return _mco_makectx(co);
 }
 
-mco_error mco_uninit(mco_coro* co) {
+mco_result mco_uninit(mco_coro* co) {
   /* Cannot uninitialize while running. */
   if(!(co->state == MCO_DEAD || co->state == MCO_SUSPENDED)) {
     MCO_LOG("attempt to uninitialize a coroutine that is not dead or suspended");
@@ -297,7 +301,7 @@ mco_error mco_uninit(mco_coro* co) {
   return MCO_SUCCESS;
 }
 
-mco_error mco_create(mco_coro** out_co, mco_desc desc) {
+mco_result mco_create(mco_coro** out_co, mco_desc desc) {
   /* Setup stack size. */
   desc.stack_size = mco_choose_stack_size(desc.stack_size);
   /* Setup allocator. */
@@ -326,21 +330,21 @@ mco_error mco_create(mco_coro** out_co, mco_desc desc) {
   memset(co, 0, desc.stack_size);
 #endif
   /* Initialize the coroutine */
-  mco_error err = mco_init(co, desc);
-  if(err != MCO_SUCCESS) {
+  mco_result res = mco_init(co, desc);
+  if(res != MCO_SUCCESS) {
     desc.free_cb(co, desc.alloc_user_data);
     *out_co = NULL;
-    return err;
+    return res;
   }
   *out_co = co;
   return MCO_SUCCESS;
 }
 
-mco_error mco_destroy(mco_coro* co) {
+mco_result mco_destroy(mco_coro* co) {
   /* Uninitialize the coroutine first. */
-  mco_error err = mco_uninit(co);
-  if(err != MCO_SUCCESS)
-    return err;
+  mco_result res = mco_uninit(co);
+  if(res != MCO_SUCCESS)
+    return res;
   /* Free */
   if(!co->free_cb) {
     MCO_LOG("failed to deallocate coroutine because free callback is NULL");
@@ -358,7 +362,7 @@ mco_coro* mco_running() {
   return mco_current_co;
 }
 
-mco_error mco_resume(mco_coro* co) {
+mco_result mco_resume(mco_coro* co) {
   if(co->state != MCO_SUSPENDED) { /* Can only resume coroutines that are suspended. */
     MCO_LOG("attempt to resume a coroutine that is not suspended");
     return MCO_NOT_SUSPENDED;
@@ -367,7 +371,7 @@ mco_error mco_resume(mco_coro* co) {
   return _mco_jumpin(co);
 }
 
-mco_error mco_yield(mco_coro *co) {
+mco_result mco_yield(mco_coro *co) {
   if(co->state != MCO_RUNNING) {  /* Can only yield coroutines that are running. */
     MCO_LOG("attempt to yield a coroutine that is not running");
     return MCO_NOT_RUNNING;
@@ -376,7 +380,7 @@ mco_error mco_yield(mco_coro *co) {
   return _mco_jumpout(co);
 }
 
-mco_error mco_set_user_data(mco_coro* co, const void* src, size_t len) {
+mco_result mco_set_user_data(mco_coro* co, const void* src, size_t len) {
   if(len > 0) {
     if(len > MCO_MAX_DATA_SIZE) {
       return MCO_NOT_ENOUGH_SPACE;
@@ -396,10 +400,10 @@ mco_error mco_set_user_data(mco_coro* co, const void* src, size_t len) {
   return MCO_SUCCESS;
 }
 
-mco_error mco_get_user_data(mco_coro* co, void* dest, size_t maxlen) {
+mco_result mco_get_user_data(mco_coro* co, void* dest, size_t maxlen) {
   size_t len = co->user_data_size;
   if(len == 0) {
-    return MCO_NO_DATA;
+    return MCO_NO_USER_DATA;
   } else if(len > maxlen) {
     return MCO_NOT_ENOUGH_SPACE;
   } else if(len > 0) {
@@ -419,10 +423,39 @@ void mco_reset_user_data(mco_coro* co) {
   mco_set_user_data(co, NULL, 0);
 }
 
-mco_error mco_get_and_reset_user_data(mco_coro* co, void* dest, size_t maxlen) {
-  mco_error err = mco_get_user_data(co, dest, maxlen);
+mco_result mco_get_and_reset_user_data(mco_coro* co, void* dest, size_t maxlen) {
+  mco_result res = mco_get_user_data(co, dest, maxlen);
   mco_reset_user_data(co);
-  return err;
+  return res;
+}
+
+const char* mco_result_description(mco_result res) {
+  switch(res) {
+    case MCO_SUCCESS:
+      return "No error";
+    case MCO_INVALID_POINTER:
+      return "Invalid pointer";
+    case MCO_NOT_SUSPENDED:
+      return "Coroutine not suspended";
+    case MCO_NOT_RUNNING:
+      return "Coroutine not running";
+    case MCO_MAKE_CONTEXT_ERROR:
+      return "Make context error";
+    case MCO_SWITCH_CONTEXT_ERROR:
+      return "Switch context error";
+    case MCO_NO_USER_DATA:
+      return "No user data";
+    case MCO_NOT_ENOUGH_SPACE:
+      return "Not enough space";
+    case MCO_OUT_OF_MEMORY:
+      return "Out of memory";
+    case MCO_INVALID_ARGUMENTS:
+      return "Invalid arguments";
+    case MCO_INVALID_OPERATION:
+      return "Invalid operation";
+    default:
+      return "Unknown error";
+  }
 }
 
 #endif /* MINICORO_IMPL */
