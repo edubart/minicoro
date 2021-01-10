@@ -29,9 +29,9 @@ LICENSE
 
 /* Coroutine states. */
 typedef enum mco_state {
-  MCO_DEAD,      /* The coroutine has finished its body function. */
+  MCO_DEAD,      /* The coroutine has finished normally or was uninitialized before finishing. */
   MCO_NORMAL,    /* The coroutine is active but not running (that is, it has resumed another coroutine). */
-  MCO_RUNNING,   /* The coroutine is running (that is, it is the one that called status). */
+  MCO_RUNNING,   /* The coroutine is active and running. */
   MCO_SUSPENDED, /* The coroutine is suspended (in a call to yield, or it has not started running yet). */
 } mco_state;
 
@@ -398,8 +398,10 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
 
 static mco_result _mco_destroy_context(mco_coro* co) {
   _mco_fcontext* context = (_mco_fcontext*)co->context;
-  DeleteFiber(context->fib);
-  context->fib = NULL;
+  if(context->fib) {
+    DeleteFiber(context->fib);
+    context->fib = NULL;
+  }
   return MCO_SUCCESS;
 }
 
@@ -434,6 +436,10 @@ mco_desc mco_desc_init(mco_func func, uintptr_t stack_size) {
 }
 
 static mco_result _mco_validate_desc(mco_desc* desc) {
+  if(!desc) {
+    MCO_LOG("coroutine description is NULL");
+    return MCO_INVALID_ARGUMENTS;
+  }
   if(!desc->func) {
     MCO_LOG("invalid function in coroutine description");
     return MCO_INVALID_ARGUMENTS;
@@ -446,14 +452,14 @@ static mco_result _mco_validate_desc(mco_desc* desc) {
     MCO_LOG("coroutine size is invalid");
     return MCO_INVALID_ARGUMENTS;
   }
-  if(!desc->malloc_cb || !desc->free_cb) {
-    MCO_LOG("coroutine allocator malloc or free is unset");
-    return MCO_INVALID_ARGUMENTS;
-  }
   return MCO_SUCCESS;
 }
 
 mco_result mco_init(mco_coro* co, mco_desc* desc) {
+  if(!co) {
+    MCO_LOG("attempt to initialize a NULL coroutine pointer");
+    return MCO_INVALID_POINTER;
+  }
   memset(co, 0, sizeof(mco_coro));
   /* Validate coroutine description. */
   mco_result res = _mco_validate_desc(desc);
@@ -471,11 +477,12 @@ mco_result mco_init(mco_coro* co, mco_desc* desc) {
 }
 
 mco_result mco_uninit(mco_coro* co) {
-  /* Ignore when already dead. */
-  if(co->state == MCO_DEAD)
-    return MCO_SUCCESS;
+  if(!co) {
+    MCO_LOG("passed a NULL coroutine pointer");
+    return MCO_INVALID_POINTER;
+  }
   /* Cannot uninitialize while running. */
-  if(co->state != MCO_SUSPENDED) {
+  if(!(co->state == MCO_SUSPENDED || co->state == MCO_DEAD)) {
     MCO_LOG("attempt to uninitialize a coroutine that is not dead or suspended");
     return MCO_INVALID_OPERATION;
   }
@@ -485,10 +492,14 @@ mco_result mco_uninit(mco_coro* co) {
 }
 
 mco_result mco_create(mco_coro** out_co, mco_desc* desc) {
-  /* Setup allocator. */
-  if(!desc->malloc_cb || !desc->free_cb) {
+  /* Validate input. */
+  if(!out_co) {
+    MCO_LOG("passed a NULL output coroutine pointer");
+    return MCO_INVALID_POINTER;
+  }
+  if(!desc || !desc->malloc_cb || !desc->free_cb) {
     *out_co = NULL;
-    MCO_LOG("invalid malloc and free allocators while creating coroutine");
+    MCO_LOG("coroutine description allocator callbacks is not set");
     return MCO_INVALID_ARGUMENTS;
   }
   /* Allocate the coroutine */
@@ -510,6 +521,10 @@ mco_result mco_create(mco_coro** out_co, mco_desc* desc) {
 }
 
 mco_result mco_destroy(mco_coro* co) {
+  if(!co) {
+    MCO_LOG("attempt to destroy a NULL coroutine");
+    return MCO_INVALID_POINTER;
+  }
   /* Uninitialize the coroutine first. */
   mco_result res = mco_uninit(co);
   if(res != MCO_SUCCESS)
