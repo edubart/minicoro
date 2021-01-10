@@ -4,11 +4,12 @@ OUTEXT=
 #OUTEXT=.exe
 CFLAGS=-O2 -Wall -Wextra -std=c99 -I..
 
-all: test_minicoro example
+all: test_minicoro example simple
 
-test: test_minicoro example
+test: test_minicoro example simple
 	./test_minicoro$(OUTEXT)
 	./example$(OUTEXT)
+	./simple$(OUTEXT)
 
 test_minicoro: test_minicoro.c ../minicoro.h Makefile
 	$(CC) $(CFLAGS) test_minicoro.c -o test_minicoro
@@ -16,5 +17,8 @@ test_minicoro: test_minicoro.c ../minicoro.h Makefile
 example: example.c ../minicoro.h Makefile
 	$(CC) $(CFLAGS) example.c -o example
 
+simple: simple.c ../minicoro.h Makefile
+	$(CC) $(CFLAGS) simple.c -o simple
+
 clean:
-	rm -f test_minicoro example
+	rm -f test_minicoro$(OUTEXT) example$(OUTEXT) simple$(OUTEXT)

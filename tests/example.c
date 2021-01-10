@@ -61,5 +61,7 @@ int main() {
 
   /* Destroy the coroutine. */
   res = mco_destroy(co);
+  if(res != MCO_SUCCESS)
+    fail("Failed to destroy coroutine", res);
   return 0;
 }

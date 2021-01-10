@@ -1,23 +1,148 @@
 /*
-minicoro.h -- Minimal asymmetric stackful coroutine in pure C99
+Minimal asymmetric stackful cross-platform coroutine library in pure C.
+minicoro
+Eduardo Bart - edub4rt@gmail.com
+https://github.com/edubart/minicoro
 
-Project URL: https://github.com/edubart/minicoro
+Minicoro is single file library for using asymmetric coroutines in C.
+The API is inspired by Lua coroutines but with C use in mind.
 
-Do this:
+# Features
+
+- Stackful asymmetric coroutines.
+- Supports nesting coroutines (resuming a coroutine from another coroutine).
+- Supports custom allocators.
+- Allow passing values between yield and resume.
+- Customizable stack size.
+- Coroutine API design inspired by Lua with use C in mind.
+- Yield across any C function.
+- Made to work in multithread applications.
+- Cross platform.
+- Minimal, self contained and no external dependencies.
+- Readable sources and documented.
+- Works in any C89 compiler.
+- Error prone API, returning proper error codes on misuse.
+
+# Implementation details
+
+On POSIX it uses ucontext API and on Windows it uses the Fibers API.
+
+# Limitations
+
+- Don't use coroutines with C++ exceptions, this is not supported.
+- When using C++ RAII (i.e. destructors) you must resume the coroutine until it dies to properly execute all destructors.
+- To properly use in multithread applications, you must compile with C compiler that supports `thread_local` storage.
+- Address sanitizers for C may trigger false warnings when using coroutines.
+- The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
+
+# Usage
+
+To use minicoro, do the following in one .c file:
+
+  ```c
   #define MINICORO_IMPL
-before you include this file in one C file to create the implementation.
+  #include "minicoro.h"
+  ```
 
-LICENSE
-  MIT license, see end of file.
+You can do `#include "minicoro.h"` in other parts of the program just like any other header.
+
+## Minimal Example
+
+The following simple example demonstrates on how to use the library:
+
+```c
+#define MINICORO_IMPL
+#include "minicoro.h"
+#include <stdio.h>
+
+// Coroutine entry function.
+void coro_entry(mco_coro* co) {
+  printf("coroutine 1\n");
+  mco_yield(co);
+  printf("coroutine 2\n");
+}
+
+int main() {
+  // First initialize a `mco_desc` object through `mco_desc_init`.
+  mco_desc desc = mco_desc_init(coro_entry, 0);
+  // Configure desc fields when needed (e.g. customize user_data, stack_size or allocation functions).
+  desc.stack_size = 32768;
+  // Call `mco_create` with the output coroutine pointer and desc pointer.
+  mco_coro* co;
+  mco_result res = mco_create(&co, &desc);
+  assert(res == MCO_SUCCESS);
+  // The coroutine should be now in suspended state.
+  assert(mco_status(co) == MCO_SUSPENDED);
+  // Call `mco_resume` to start for the first time, switching to its context.
+  res = mco_resume(co); // Should print "coroutine 1".
+  assert(res == MCO_SUCCESS);
+  // We get back from coroutine context in suspended state (because it's unfinished).
+  assert(mco_status(co) == MCO_SUSPENDED);
+  // Call `mco_resume` to resume for a second time.
+  res = mco_resume(co); // Should print "coroutine 2".
+  assert(res == MCO_SUCCESS);
+  // The coroutine finished and should be now dead.
+  assert(mco_status(co) == MCO_DEAD);
+  // Call `mco_destrou` to destroy the coroutine.
+  res = mco_destroy(co);
+  assert(res == MCO_SUCCESS);
+  return 0;
+}
+```
+
+_NOTE_: In case you don't want to use the minicoro allocator system you should
+allocate a coroutine object yourself using `mco_desc.coro_size` and call `mco_init`,
+then later to destroy call `mco_deinit` and deallocate it.
+
+## Yielding from anywhere
+
+You can yield the current running coroutine from anywhere
+without having to pass `mco_coro` pointers around,
+to this just use `mco_yield(mco_running())`.
+
+## Passing data between yield and resume
+
+The library has the IO data interface to assist passing data between yield and resume.
+It's usage is straightforward,
+use `mco_set_io_data` to send data before a `mco_resume` or `mco_yield`,
+then later use `mco_get_io_data` after a `mco_resume` or `mco_yield` to receive data.
+
+## Error handling
+
+The library return error codes in most of its API in case of misuse or system error,
+the user is encouraged to handle them properly.
+
+## Library customization
+
+The following can be defined to change the library behavior:
+
+- `MCO_API`                   - Public API qualifier. Default is `extern`.
+- `MCO_IO_DATA_SIZE`          - Size of IO data interface buffer. Default is 1024.
+- `MCO_MIN_STACK_SIZE`        - Minimum stack size when creating a coroutine. Default is 32768.
+- `MCO_DEFAULT_STACK_SIZE`    - Default stack size when creating a coroutine. Default is 57344.
+- `MCO_MALLOC`                - Default allocation function. Default is `malloc`.
+- `MCO_FREE`                  - Default deallocation function. Default is `free`.
+- `MCO_DEBUG`                 - Enable debug mode, logging any runtime error to stdout. Defined automatically unless `NDEBUG` or `MCO_NO_DEBUG` is defined.
+- `MCO_NO_DEBUG`              - Disable debug mode.
+- `MCO_NO_MULTITHREAD`        - Disable multithread usage. Multithread is supported when `thread_local` is supported.
+- `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
+- `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding IO data, intended for garbage collected environments.
+
+# License
+
+MIT, see end of file.
 */
+
 
 #ifndef MINICORO_H
 #define MINICORO_H
 
+/* Public API qualifier. */
 #ifndef MCO_API
 #define MCO_API extern
 #endif
 
+/* Size of IO data interface buffer. */
 #ifndef MCO_IO_DATA_SIZE
 #define MCO_IO_DATA_SIZE 1024
 #endif
@@ -29,7 +154,7 @@ LICENSE
 
 /* Coroutine states. */
 typedef enum mco_state {
-  MCO_DEAD,      /* The coroutine has finished normally or was uninitialized before finishing. */
+  MCO_DEAD = 0,  /* The coroutine has finished normally or was uninitialized before finishing. */
   MCO_NORMAL,    /* The coroutine is active but not running (that is, it has resumed another coroutine). */
   MCO_RUNNING,   /* The coroutine is active and running. */
   MCO_SUSPENDED, /* The coroutine is suspended (in a call to yield, or it has not started running yet). */
@@ -37,7 +162,7 @@ typedef enum mco_state {
 
 /* Coroutine result codes. */
 typedef enum mco_result {
-  MCO_SUCCESS,
+  MCO_SUCCESS = 0,
   MCO_INVALID_POINTER,
   MCO_INVALID_COROUTINE,
   MCO_NOT_SUSPENDED,
@@ -69,65 +194,37 @@ struct mco_coro {
 
 /* Structure used to initialize a coroutine. */
 typedef struct mco_desc {
-  mco_func func;        /* entry point function for the coroutine */
-  uintptr_t coro_size;  /* coroutine size, must be initialized through mco_init_desc */
-  uintptr_t stack_size; /* coroutine stack size, must be initialized through mco_init_desc */
-  void* user_data;      /* coroutine user data, can be retrieved with mco_get_user_data */
-  /* custom allocation interface */
-  void* (*malloc_cb)(size_t size, void* allocator_data); /* custom allocation function */
-  void  (*free_cb)(void* ptr, void* allocator_data);     /* custom deallocation function */
-  void* allocator_data; /* user data passed to malloc/free allocation functions */
+  mco_func func;        /* Entry point function for the coroutine. */
+  uintptr_t coro_size;  /* Coroutine size, must be initialized through mco_init_desc. */
+  uintptr_t stack_size; /* Coroutine stack size, must be initialized through `mco_init_desc`. */
+  void* user_data;      /* Coroutine user data, can be get with `mco_get_user_data`. */
+  /* Custom allocation interface. */
+  void* (*malloc_cb)(size_t size, void* allocator_data); /* Custom allocation function. */
+  void  (*free_cb)(void* ptr, void* allocator_data);     /* Custom deallocation function. */
+  void* allocator_data; /* User data pointer passed to `malloc`/`free` allocation functions. */
 } mco_desc;
 
-/* Initialize description of a coroutine, use this if you want to manually allocate. */
-MCO_API mco_desc mco_desc_init(mco_func func, uintptr_t stack_size);
+/* Coroutine functions. */
+MCO_API mco_desc mco_desc_init(mco_func func, uintptr_t stack_size);  /* Initialize description of a coroutine. */
+MCO_API mco_result mco_init(mco_coro* co, mco_desc* desc);            /* Initialize the coroutine. */
+MCO_API mco_result mco_uninit(mco_coro* co);                          /* Uninitialize the coroutine, may fail if it's not dead or suspended. */
+MCO_API mco_result mco_create(mco_coro** out_co, mco_desc* desc);     /* Allocates and initializes a new coroutine. */
+MCO_API mco_result mco_destroy(mco_coro* co);                         /* Uninitialize and deallocate the coroutine, may fail if it's not dead or suspended. */
+MCO_API mco_result mco_resume(mco_coro* co);                          /* Starts or continues the execution of the coroutine. */
+MCO_API mco_result mco_yield(mco_coro* co);                           /* Suspends the execution of a coroutine. */
+MCO_API mco_state mco_status(mco_coro* co);                           /* Returns the status of the coroutine. */
+MCO_API void* mco_get_user_data(mco_coro* co);                        /* Get coroutine user data supplied on coroutine creation. */
 
-/* Initialize the coroutine. */
-MCO_API mco_result mco_init(mco_coro* co, mco_desc* desc);
+/* IO data interface functions. The IO data interface is used to pass values between yield and resume. */
+MCO_API mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len);          /* Set the coroutine IO data. Use to send values between yield and resume. */
+MCO_API mco_result mco_get_io_data(mco_coro* co, void* dest, size_t maxlen);            /* Get the coroutine IO data. Use to receive values between yield and resume. */
+MCO_API size_t mco_get_io_data_size();                                                  /* Get the coroutine IO data size. */
+MCO_API mco_result mco_reset_io_data(mco_coro* co);                                     /* Clear the coroutine IO data. Call this to reset IO data before a yield or resume. */
+MCO_API mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen);  /* Shortcut for `mco_get_io_data` + `mco_reset_io_data`. */
 
-/* Uninitialize the coroutine. */
-/* The operation may fail if the coroutine is not dead or suspended, in this case, the operation is ignored. */
-MCO_API mco_result mco_uninit(mco_coro* co);
-
-/* Create a new coroutine. It allocates and call mco_init. */
-MCO_API mco_result mco_create(mco_coro** out_co, mco_desc* desc);
-
-/* Uninitialize the coroutine and free all resources. */
-/* The operation may fail if the coroutine is not dead or suspended, in this case, the operation is ignored. */
-MCO_API mco_result mco_destroy(mco_coro* co);
-
-/* Returns the status of the coroutine. */
-MCO_API mco_state mco_status(mco_coro* co);
-
-/* Returns the running coroutine in the current thread. */
-MCO_API mco_coro* mco_running();
-
-/* Starts or continues the execution of the coroutine. */
-MCO_API mco_result mco_resume(mco_coro* co);
-
-/* Suspends the execution of a coroutine. */
-MCO_API mco_result mco_yield(mco_coro* co);
-
-/* Set the coroutine IO data. Use to pass results between yield and resume. */
-MCO_API mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len);
-
-/* Get the coroutine IO data. Use to retrieve results between yield and resume. */
-MCO_API mco_result mco_get_io_data(mco_coro* co, void* dest, size_t maxlen);
-
-/* Get the coroutine IO data size. */
-MCO_API size_t mco_get_io_data_size();
-
-/* Clear the coroutine IO data. Call this to reset IO data before a yield or resume. */
-MCO_API mco_result mco_reset_io_data(mco_coro* co);
-
-/* Shortcut for mco_get_io_data + mco_reset_io_data. */
-MCO_API mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen);
-
-/* Retrieve coroutine user data supplied on coroutine creation. */
-MCO_API void* mco_get_user_data(mco_coro* co);
-
-/* Get a string description of result. */
-MCO_API const char* mco_result_description(mco_result res);
+/* Misc functions. */
+MCO_API mco_coro* mco_running();                            /* Returns the running coroutine for the current thread. */
+MCO_API const char* mco_result_description(mco_result res); /* Get the description of a result. */
 
 #endif /* MINICORO_H */
 
@@ -135,10 +232,12 @@ MCO_API const char* mco_result_description(mco_result res);
 
 /* ---------------------------------------------------------------------------------------------- */
 
+/* Minimum stack size when creating a coroutine. */
 #ifndef MCO_MIN_STACK_SIZE
 #define MCO_MIN_STACK_SIZE 32768
 #endif
 
+/* Default stack size when creating a coroutine. */
 #ifndef MCO_DEFAULT_STACK_SIZE
 #define MCO_DEFAULT_STACK_SIZE 57344 /* Don't use multiples of 64K to avoid D-cache aliasing conflicts. */
 #endif
@@ -165,8 +264,12 @@ MCO_API const char* mco_result_description(mco_result res);
 #endif
 
 #ifndef MCO_ASSERT
-  #include <assert.h>
-  #define MCO_ASSERT(c) assert(c)
+  #ifdef MCO_DEBUG
+    #include <assert.h>
+    #define MCO_ASSERT(c) assert(c)
+  #else
+    #define MCO_ASSERT(c)
+  #endif
 #endif
 
 #ifdef MCO_NO_MULTITHREAD
@@ -180,7 +283,7 @@ MCO_API const char* mco_result_description(mco_result res);
     #define _MCO_THREAD_LOCAL __declspec(thread)
   #elif defined(__GNUC__) || defined(__SUNPRO_C) || defined(__xlC__)
     #define _MCO_THREAD_LOCAL __thread
-  #else /* mco_running() will be thread unsafe */
+  #else /* No thread local support, `mco_running` will be thread unsafe. */
     #define _MCO_THREAD_LOCAL
   #endif
 #endif
@@ -201,7 +304,7 @@ static void mco_free(void* ptr, void* allocator_data) {
 }
 #endif /* MCO_NO_DEFAULT_ALLOCATORS */
 
-#include <string.h> /* for memcpy, memset */
+#include <string.h> /* For memcpy and memset. */
 
 /* Utility for aligning addresses. */
 static uintptr_t _mco_align_forward(uintptr_t addr, uintptr_t align) {
@@ -240,7 +343,7 @@ static mco_result _mco_jumpout(mco_coro* co);
 static void _mco_main_inner(mco_coro* co) {
   co->func(co); /* Run the coroutine function. */
   co->state = MCO_DEAD; /* Coroutine finished successfully, set state to dead. */
-  _mco_jumpout(co); /* Jump back to the old context */
+  _mco_jumpout(co); /* Jump back to the old context .*/
 }
 
 /* ---------------------------------------------------------------------------------------------- */
@@ -351,8 +454,7 @@ typedef struct _mco_fcontext {
 
 static mco_result _mco_jumpin(mco_coro* co) {
   void *cur_fib = GetCurrentFiber();
-  /* See: http://blogs.msdn.com/oldnewthing/archive/2004/12/31/344799.aspx */
-  if(!cur_fib || cur_fib == (void*)0x1e00) {
+  if(!cur_fib || cur_fib == (void*)0x1e00) { /* See http://blogs.msdn.com/oldnewthing/archive/2004/12/31/344799.aspx */
     cur_fib = ConvertThreadToFiber(NULL);
   }
   if(!cur_fib) {
@@ -385,7 +487,7 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   uintptr_t co_addr = (uintptr_t)co;
   uintptr_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
   _mco_fcontext* context = (_mco_fcontext*)context_addr;
-  /* Create the fiber */
+  /* Create the fiber. */
   void* fib = CreateFiber(desc->stack_size, (LPFIBER_START_ROUTINE)_mco_main, co);
   if(!fib) {
     MCO_LOG("failed to create fiber");
@@ -416,7 +518,7 @@ static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
 
 mco_desc mco_desc_init(mco_func func, uintptr_t stack_size) {
   if(stack_size != 0) {
-    /* Stack size should be at least MCO_MIN_STACK_SIZE. */
+    /* Stack size should be at least `MCO_MIN_STACK_SIZE`. */
     if(stack_size < MCO_MIN_STACK_SIZE) {
       stack_size = MCO_MIN_STACK_SIZE;
     }
@@ -503,14 +605,14 @@ mco_result mco_create(mco_coro** out_co, mco_desc* desc) {
     MCO_LOG("coroutine allocator description is not set");
     return MCO_INVALID_ARGUMENTS;
   }
-  /* Allocate the coroutine */
+  /* Allocate the coroutine. */
   mco_coro* co = (mco_coro*)desc->malloc_cb(desc->coro_size, desc->allocator_data);
   if(!co) {
     MCO_LOG("coroutine allocation failed");
     *out_co = NULL;
     return MCO_OUT_OF_MEMORY;
   }
-  /* Initialize the coroutine */
+  /* Initialize the coroutine. */
   mco_result res = mco_init(co, desc);
   if(res != MCO_SUCCESS) {
     desc->free_cb(co, desc->allocator_data);
@@ -530,24 +632,13 @@ mco_result mco_destroy(mco_coro* co) {
   mco_result res = mco_uninit(co);
   if(res != MCO_SUCCESS)
     return res;
-  /* Free */
+  /* Free the coroutine. */
   if(!co->free_cb) {
     MCO_LOG("attempt destroy a coroutine that has not free callback");
     return MCO_INVALID_POINTER;
   }
   co->free_cb(co, co->allocator_data);
   return MCO_SUCCESS;
-}
-
-mco_state mco_status(mco_coro* co) {
-  if(co != NULL) {
-    return co->state;
-  }
-  return MCO_DEAD;
-}
-
-mco_coro* mco_running() {
-  return mco_current_co;
 }
 
 mco_result mco_resume(mco_coro* co) {
@@ -576,6 +667,20 @@ mco_result mco_yield(mco_coro* co) {
   return _mco_jumpout(co);
 }
 
+mco_state mco_status(mco_coro* co) {
+  if(co != NULL) {
+    return co->state;
+  }
+  return MCO_DEAD;
+}
+
+void* mco_get_user_data(mco_coro* co) {
+  if(co != NULL) {
+    return co->user_data;
+  }
+  return NULL;
+}
+
 mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len) {
   if(!co) {
     MCO_LOG("attempt to use an invalid coroutine");
@@ -596,7 +701,7 @@ mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len) {
     memcpy(&co->io_data[0], src, len);
 #ifdef MCO_ZERO_MEMORY
     if(len < co->io_data_size) {
-      /* Clear garbage in old IO data . */
+      /* Clear garbage in old IO data. */
       memset(&co->io_data[len], 0, co->io_data_size - len);
     }
 #endif
@@ -644,11 +749,8 @@ mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen) {
   return mco_reset_io_data(co);
 }
 
-void* mco_get_user_data(mco_coro* co) {
-  if(co != NULL) {
-    return co->user_data;
-  }
-  return NULL;
+mco_coro* mco_running() {
+  return mco_current_co;
 }
 
 const char* mco_result_description(mco_result res) {
