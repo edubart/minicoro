@@ -18,8 +18,8 @@ LICENSE
 #define MCO_API extern
 #endif
 
-#ifndef MCO_USER_DATA_SIZE
-#define MCO_USER_DATA_SIZE 1024
+#ifndef MCO_IO_DATA_SIZE
+#define MCO_IO_DATA_SIZE 1024
 #endif
 
 #include <stddef.h> /* for size_t */
@@ -43,7 +43,7 @@ typedef enum mco_result {
   MCO_NOT_RUNNING,
   MCO_MAKE_CONTEXT_ERROR,
   MCO_SWITCH_CONTEXT_ERROR,
-  MCO_NO_USER_DATA,
+  MCO_NO_IO_DATA,
   MCO_NOT_ENOUGH_SPACE,
   MCO_OUT_OF_MEMORY,
   MCO_INVALID_ARGUMENTS,
@@ -59,10 +59,11 @@ struct mco_coro {
   mco_state state;
   mco_func func;
   mco_coro* prev_co;
-  void (*free_cb)(void* ptr, void* alloc_user_data);
-  void* alloc_user_data;
-  size_t user_data_size;
-  uint8_t user_data[MCO_USER_DATA_SIZE];
+  void* user_data;
+  void* allocator_data;
+  void (*free_cb)(void* ptr, void* allocator_data);
+  size_t io_data_size;
+  uint8_t io_data[MCO_IO_DATA_SIZE];
 };
 
 /* Structure used to initialize a coroutine. */
@@ -70,10 +71,11 @@ typedef struct mco_desc {
   mco_func func;        /* entry point function for the coroutine */
   uintptr_t coro_size;  /* coroutine size, must be initialized through mco_init_desc */
   uintptr_t stack_size; /* coroutine stack size, must be initialized through mco_init_desc */
+  void* user_data;      /* coroutine user data, can be retrieved with mco_get_user_data */
   /* custom allocation interface */
-  void* (*malloc_cb)(size_t size, void* alloc_user_data); /* custom allocation function */
-  void  (*free_cb)(void* ptr, void* alloc_user_data);     /* custom deallocation function */
-  void* alloc_user_data; /* user data passed to malloc/free allocation functions */
+  void* (*malloc_cb)(size_t size, void* allocator_data); /* custom allocation function */
+  void  (*free_cb)(void* ptr, void* allocator_data);     /* custom deallocation function */
+  void* allocator_data; /* user data passed to malloc/free allocation functions */
 } mco_desc;
 
 /* Initialize description of a coroutine, use this if you want to manually allocate. */
@@ -105,20 +107,23 @@ MCO_API mco_result mco_resume(mco_coro* co);
 /* Suspends the execution of the coroutine. */
 MCO_API mco_result mco_yield(mco_coro *co);
 
-/* Set the coroutine user data. Use to pass results between yield and resume. */
-MCO_API mco_result mco_set_user_data(mco_coro* co, const void* src, size_t len);
+/* Set the coroutine IO data. Use to pass results between yield and resume. */
+MCO_API mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len);
 
-/* Get the coroutine user data. Use to retrieve results between yield and resume. */
-MCO_API mco_result mco_get_user_data(mco_coro* co, void* dest, size_t maxlen);
+/* Get the coroutine IO data. Use to retrieve results between yield and resume. */
+MCO_API mco_result mco_get_io_data(mco_coro* co, void* dest, size_t maxlen);
 
-/* Get the coroutine user data size. */
-MCO_API size_t mco_get_user_data_size();
+/* Get the coroutine IO data size. */
+MCO_API size_t mco_get_io_data_size();
 
-/* Clear the coroutine user data. Call this to reset user data before a yield or resume. */
-MCO_API void mco_reset_user_data(mco_coro* co);
+/* Clear the coroutine IO data. Call this to reset IO data before a yield or resume. */
+MCO_API void mco_reset_io_data(mco_coro* co);
 
-/* Shortcut for mco_get_user_data + mco_reset_user_data. Reset is called even on errors. */
-MCO_API mco_result mco_get_and_reset_user_data(mco_coro* co, void* dest, size_t maxlen);
+/* Shortcut for mco_get_io_data + mco_reset_io_data. Reset is called even on errors. */
+MCO_API mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen);
+
+/* Retrieve coroutine user data supplied on coroutine creation. */
+MCO_API void* mco_get_user_data(mco_coro* co);
 
 /* Get a string description of result. */
 MCO_API const char* mco_result_description(mco_result res);
@@ -191,12 +196,12 @@ MCO_API const char* mco_result_description(mco_result res);
   #define MCO_MALLOC malloc
   #define MCO_FREE free
 #endif
-static void* mco_malloc(size_t size, void* user_data) {
-  _MCO_UNUSED(user_data);
+static void* mco_malloc(size_t size, void* allocator_data) {
+  _MCO_UNUSED(allocator_data);
   return MCO_MALLOC(size);
 }
-static void mco_free(void* ptr, void* user_data) {
-  _MCO_UNUSED(user_data);
+static void mco_free(void* ptr, void* allocator_data) {
+  _MCO_UNUSED(allocator_data);
   MCO_FREE(ptr);
 }
 #endif /* MCO_NO_DEFAULT_ALLOCATORS */
@@ -471,8 +476,9 @@ mco_result mco_init(mco_coro* co, mco_desc* desc) {
     return res;
   co->state = MCO_SUSPENDED; /* We initialize in suspended state. */
   co->free_cb = desc->free_cb;
-  co->alloc_user_data = desc->alloc_user_data;
+  co->allocator_data = desc->allocator_data;
   co->func = desc->func;
+  co->user_data = desc->user_data;
   return MCO_SUCCESS;
 }
 
@@ -503,7 +509,7 @@ mco_result mco_create(mco_coro** out_co, mco_desc* desc) {
     return MCO_INVALID_ARGUMENTS;
   }
   /* Allocate the coroutine */
-  mco_coro *co = (mco_coro*)desc->malloc_cb(desc->coro_size, desc->alloc_user_data);
+  mco_coro *co = (mco_coro*)desc->malloc_cb(desc->coro_size, desc->allocator_data);
   if(!co) {
     MCO_LOG("failed to allocate coroutine");
     *out_co = NULL;
@@ -512,7 +518,7 @@ mco_result mco_create(mco_coro** out_co, mco_desc* desc) {
   /* Initialize the coroutine */
   mco_result res = mco_init(co, desc);
   if(res != MCO_SUCCESS) {
-    desc->free_cb(co, desc->alloc_user_data);
+    desc->free_cb(co, desc->allocator_data);
     *out_co = NULL;
     return res;
   }
@@ -534,11 +540,12 @@ mco_result mco_destroy(mco_coro* co) {
     MCO_LOG("failed to deallocate coroutine because free callback is NULL");
     return MCO_INVALID_POINTER;
   }
-  co->free_cb(co, co->alloc_user_data);
+  co->free_cb(co, co->allocator_data);
   return MCO_SUCCESS;
 }
 
 mco_state mco_status(mco_coro* co) {
+  MCO_ASSERT(co != NULL);
   return co->state;
 }
 
@@ -547,6 +554,7 @@ mco_coro* mco_running() {
 }
 
 mco_result mco_resume(mco_coro* co) {
+  MCO_ASSERT(co != NULL);
   if(co->state != MCO_SUSPENDED) { /* Can only resume coroutines that are suspended. */
     MCO_LOG("attempt to resume a coroutine that is not suspended");
     return MCO_NOT_SUSPENDED;
@@ -556,6 +564,7 @@ mco_result mco_resume(mco_coro* co) {
 }
 
 mco_result mco_yield(mco_coro *co) {
+  MCO_ASSERT(co != NULL);
   if(co->state != MCO_RUNNING) {  /* Can only yield coroutines that are running. */
     MCO_LOG("attempt to yield a coroutine that is not running");
     return MCO_NOT_RUNNING;
@@ -564,55 +573,65 @@ mco_result mco_yield(mco_coro *co) {
   return _mco_jumpout(co);
 }
 
-mco_result mco_set_user_data(mco_coro* co, const void* src, size_t len) {
-  if(len > MCO_USER_DATA_SIZE) {
-    MCO_LOG("not enough space for setting user data");
+mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len) {
+  MCO_ASSERT(co != NULL);
+  if(len > MCO_IO_DATA_SIZE) {
+    MCO_LOG("not enough space for setting io data");
     return MCO_NOT_ENOUGH_SPACE;
   } else if(len > 0) {
     if(!src) {
-      MCO_LOG("invalid pointer when setting user data");
+      MCO_LOG("invalid pointer when setting io data");
       return MCO_INVALID_POINTER;
     }
-    memcpy(&co->user_data[0], src, len);
+    memcpy(&co->io_data[0], src, len);
 #ifdef MCO_ZERO_MEMORY
-    if(len < co->user_data_size) {
-      /* Clear garbage in old user data . */
-      memset(&co->user_data[len], 0, co->user_data_size - len);
+    if(len < co->io_data_size) {
+      /* Clear garbage in old IO data . */
+      memset(&co->io_data[len], 0, co->io_data_size - len);
     }
 #endif
   }
-  co->user_data_size = len;
+  co->io_data_size = len;
   return MCO_SUCCESS;
 }
 
-mco_result mco_get_user_data(mco_coro* co, void* dest, size_t maxlen) {
-  if(co->user_data_size == 0) {
-    return MCO_NO_USER_DATA;
-  } else if(co->user_data_size > maxlen) {
-    MCO_LOG("not enough space for getting user data");
+mco_result mco_get_io_data(mco_coro* co, void* dest, size_t maxlen) {
+  MCO_ASSERT(co != NULL);
+  if(co->io_data_size == 0) {
+    return MCO_NO_IO_DATA;
+  } else if(co->io_data_size > maxlen) {
+    MCO_LOG("not enough space for getting io data");
     return MCO_NOT_ENOUGH_SPACE;
-  } else if(co->user_data_size > 0) {
+  } else if(co->io_data_size > 0) {
     if(!dest) {
-      MCO_LOG("invalid pointer when getting user data");
+      MCO_LOG("invalid pointer when getting io data");
       return MCO_INVALID_POINTER;
     }
-    memcpy(dest, &co->user_data[0], co->user_data_size);
+    memcpy(dest, &co->io_data[0], co->io_data_size);
   }
   return MCO_SUCCESS;
 }
 
-size_t mco_get_user_data_size(mco_coro* co) {
-  return co->user_data_size;
+size_t mco_get_io_data_size(mco_coro* co) {
+  MCO_ASSERT(co != NULL);
+  return co->io_data_size;
 }
 
-void mco_reset_user_data(mco_coro* co) {
-  mco_set_user_data(co, NULL, 0);
+void mco_reset_io_data(mco_coro* co) {
+  MCO_ASSERT(co != NULL);
+  mco_set_io_data(co, NULL, 0);
 }
 
-mco_result mco_get_and_reset_user_data(mco_coro* co, void* dest, size_t maxlen) {
-  mco_result res = mco_get_user_data(co, dest, maxlen);
-  mco_reset_user_data(co);
+mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen) {
+  MCO_ASSERT(co != NULL);
+  mco_result res = mco_get_io_data(co, dest, maxlen);
+  mco_reset_io_data(co);
   return res;
+}
+
+void* mco_get_user_data(mco_coro* co) {
+  MCO_ASSERT(co != NULL);
+  return co->user_data;
 }
 
 const char* mco_result_description(mco_result res) {
@@ -629,8 +648,8 @@ const char* mco_result_description(mco_result res) {
       return "Make context error";
     case MCO_SWITCH_CONTEXT_ERROR:
       return "Switch context error";
-    case MCO_NO_USER_DATA:
-      return "No user data";
+    case MCO_NO_IO_DATA:
+      return "No IO data";
     case MCO_NOT_ENOUGH_SPACE:
       return "Not enough space";
     case MCO_OUT_OF_MEMORY:
