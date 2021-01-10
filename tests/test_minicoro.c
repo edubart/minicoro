@@ -14,7 +14,7 @@ void coro_entry2(mco_coro* co2) {
   assert(mco_status(co) == MCO_NORMAL);
   assert(mco_get_io_data(co2, &co, sizeof(co)) == MCO_NO_IO_DATA);
   printf("hello 2\n");
-  assert(mco_yield(co2) == MCO_SUCCESS);
+  assert(mco_yield(mco_running()) == MCO_SUCCESS);
   printf("world! 2\n");
 }
 
