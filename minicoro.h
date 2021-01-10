@@ -150,10 +150,8 @@ MCO_API const char* mco_result_description(mco_result res);
 
 #define _MCO_UNUSED(x) (void)(x)
 
-#ifndef MCO_DEBUG
-  #ifndef NDEBUG
-    #define MCO_DEBUG
-  #endif
+#if !defined(MCO_NO_DEBUG) && !defined(NDEBUG) && !defined(MCO_DEBUG)
+#define MCO_DEBUG
 #endif
 
 #ifndef MCO_LOG
@@ -163,10 +161,6 @@ MCO_API const char* mco_result_description(mco_result res);
   #else
     #define MCO_LOG(s)
   #endif
-#endif
-
-#ifndef MCO_UNREACHABLE
-#define MCO_UNREACHABLE() __builtin_unreachable()
 #endif
 
 #ifndef MCO_ASSERT
