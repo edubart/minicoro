@@ -11,6 +11,7 @@ for the [Nelua programming language](https://github.com/edubart/nelua-lang).
 # Features
 
 * Stackful asymmetric coroutines
+* Support nested coroutines (resuming a coroutine inside another coroutine)
 * Allow using custom allocators
 * Customizable stack size
 * Very Lua like API design
@@ -32,7 +33,8 @@ because it would perform context switching a little faster (no syscalls).
 
 * To properly support multithread you must compile with a C compiler that does support
 `_Thread_local` storage.
-* The library should work with multiple threads, but a the `mco_coro` object is not thread safe.
+* The library should work with multiple threads, but the `mco_coro` object is not thread safe.
+* When using in C++, the user should avoid using exceptions and RAII inside the coroutine.
 
 # Usage
 

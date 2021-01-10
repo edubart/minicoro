@@ -14,49 +14,16 @@ LICENSE
 #ifndef MINICORO_H
 #define MINICORO_H
 
-/* Use thread local */
-#ifdef MCO_NO_MULTITHREAD
-  #define _MCO_THREAD_LOCAL
-#else
-  #ifdef thread_local
-    #define _MCO_THREAD_LOCAL thread_local
-  #elif __STDC_VERSION__ >= 201112 && !defined(__STDC_NO_THREADS__)
-    #define _MCO_THREAD_LOCAL _Thread_local
-  #elif defined(_WIN32) && (defined(_MSC_VER) || defined(__ICL) ||  defined(__DMC__) ||  defined(__BORLANDC__))
-    #define _MCO_THREAD_LOCAL __declspec(thread)
-  #elif defined(__GNUC__) || defined(__SUNPRO_C) || defined(__xlC__)
-    #define _MCO_THREAD_LOCAL __thread
-  #else /* mco_running will be thread unsafe */
-    #define _MCO_THREAD_LOCAL
-  #endif
-#endif
-
 #ifndef MCO_API
 #define MCO_API extern
 #endif
 
-#define _MCO_CTX_SIZE 1024 /* Must be enough to hold ucontext_t. */
-
-#ifndef MCO_MAX_DATA_SIZE
-#define MCO_MAX_DATA_SIZE 1024
+#ifndef MCO_USER_DATA_SIZE
+#define MCO_USER_DATA_SIZE 1024
 #endif
 
-#ifndef MCO_MIN_STACKSIZE
-#define MCO_MIN_STACKSIZE 32768
-#endif
-
-#ifndef MCO_DEFAULT_STACKSIZE
-#define MCO_DEFAULT_STACKSIZE 57344 /* Don't use multiples of 64K to avoid D-cache aliasing conflicts. */
-#endif
-
-#ifdef _WIN32
-#define MCO_USE_FIBERS
-#else
-#define MCO_USE_UCONTEXT
-#endif
-
-#include <stddef.h>
-#include <stdint.h>
+#include <stddef.h> /* for size_t */
+#include <stdint.h> /* for uintptr_t, uint32_t, etc.. */
 
 /* ---------------------------------------------------------------------------------------------- */
 
@@ -89,13 +56,13 @@ typedef void (*mco_func)(mco_coro* co);
 /* Coroutine structure. */
 struct mco_coro {
   void* context;
-  uint8_t user_data[MCO_MAX_DATA_SIZE];
-  size_t user_data_size;
   mco_state state;
   mco_func func;
   mco_coro* prev_co;
   void (*free_cb)(void* ptr, void* alloc_user_data);
   void* alloc_user_data;
+  size_t user_data_size;
+  uint8_t user_data[MCO_USER_DATA_SIZE];
 };
 
 /* Structure used to initialize a coroutine. */
@@ -162,6 +129,20 @@ MCO_API const char* mco_result_description(mco_result res);
 
 /* ---------------------------------------------------------------------------------------------- */
 
+#ifndef MCO_MIN_STACK_SIZE
+#define MCO_MIN_STACK_SIZE 32768
+#endif
+
+#ifndef MCO_DEFAULT_STACK_SIZE
+#define MCO_DEFAULT_STACK_SIZE 57344 /* Don't use multiples of 64K to avoid D-cache aliasing conflicts. */
+#endif
+
+#ifdef _WIN32
+#define MCO_USE_FIBERS
+#else
+#define MCO_USE_UCONTEXT
+#endif
+
 #define _MCO_UNUSED(x) (void)(x)
 
 #ifndef MCO_DEBUG
@@ -179,9 +160,29 @@ MCO_API const char* mco_result_description(mco_result res);
   #endif
 #endif
 
+#ifndef MCO_UNREACHABLE
+#define MCO_UNREACHABLE() __builtin_unreachable()
+#endif
+
 #ifndef MCO_ASSERT
   #include <assert.h>
   #define MCO_ASSERT(c) assert(c)
+#endif
+
+#ifdef MCO_NO_MULTITHREAD
+  #define _MCO_THREAD_LOCAL
+#else
+  #ifdef thread_local
+    #define _MCO_THREAD_LOCAL thread_local
+  #elif __STDC_VERSION__ >= 201112 && !defined(__STDC_NO_THREADS__)
+    #define _MCO_THREAD_LOCAL _Thread_local
+  #elif defined(_WIN32) && (defined(_MSC_VER) || defined(__ICL) ||  defined(__DMC__) ||  defined(__BORLANDC__))
+    #define _MCO_THREAD_LOCAL __declspec(thread)
+  #elif defined(__GNUC__) || defined(__SUNPRO_C) || defined(__xlC__)
+    #define _MCO_THREAD_LOCAL __thread
+  #else /* mco_running() will be thread unsafe */
+    #define _MCO_THREAD_LOCAL
+  #endif
 #endif
 
 #ifndef MCO_NO_DEFAULT_ALLOCATORS
@@ -200,12 +201,14 @@ static void mco_free(void* ptr, void* user_data) {
 }
 #endif /* MCO_NO_DEFAULT_ALLOCATORS */
 
-#include <string.h>
+#include <string.h> /* for memcpy, memset */
 
+/* Utility for aligning addresses. */
 static uintptr_t _mco_align_forward(uintptr_t addr, uintptr_t align) {
   return (addr + (align-1)) & ~(align-1);
 }
 
+/* Variable holding the current running coroutine per thread. */
 static _MCO_THREAD_LOCAL mco_coro* mco_current_co = NULL;
 
 static void _mco_prepare_jumpin(mco_coro* co) {
@@ -249,16 +252,14 @@ static void _mco_main_inner(mco_coro* co) {
 typedef struct _mco_ucontext {
   ucontext_t ctx;
   ucontext_t back_ctx;
-  void* stack_ptr;
-  uintptr_t stack_size;
 } _mco_ucontext;
 
 static mco_result _mco_switch(ucontext_t* from, ucontext_t* to) {
   if(swapcontext(from, to) == -1) {
-    MCO_LOG("swap context error");
+    /* This error is fatal, expect the library to be in a bad state when this happens. */
+    MCO_LOG("swap context fatal error");
     return MCO_SWITCH_CONTEXT_ERROR;
   }
-  /* This only happens if we are already in the context. */
   return MCO_SUCCESS;
 }
 
@@ -286,26 +287,31 @@ static void _mco_main(uint32_t lo) {
 }
 #endif
 
-static mco_result _mco_create(mco_coro* co, mco_desc* desc) {
+static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context and stack address. */
   uintptr_t co_addr = (uintptr_t)co;
   uintptr_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
   uintptr_t stack_addr = _mco_align_forward(context_addr + sizeof(_mco_ucontext), 16);
-  _mco_ucontext* context = (_mco_ucontext*)context_addr;
   /* Initialize context. */
+  _mco_ucontext* context = (_mco_ucontext*)context_addr;
   memset(context, 0, sizeof(_mco_ucontext));
-  context->stack_ptr = (void*)stack_addr;
-  context->stack_size = co_addr + desc->coro_size - stack_addr;
+  /* Initialize stack. */
+  void *stack_ptr = (void*)stack_addr;
+  uintptr_t stack_size = co_addr + desc->coro_size - stack_addr;
+#ifdef MCO_ZERO_MEMORY
+  memset(stack_ptr, 0, stack_size);
+#endif
+  /* Initialize ucontext. */
   ucontext_t* ctx = &context->ctx;
   if(getcontext(ctx) != 0) {
     MCO_LOG("get context context");
     return MCO_MAKE_CONTEXT_ERROR;
   }
   ctx->uc_link = NULL;  /* We never exit from _mco_main. */
-  ctx->uc_stack.ss_sp = context->stack_ptr;
-  ctx->uc_stack.ss_size = context->stack_size;
+  ctx->uc_stack.ss_sp = stack_ptr;
+  ctx->uc_stack.ss_size = stack_size;
   uint32_t lo = (uint32_t)((uintptr_t)co);
-#if defined(_WIN64) || defined(_LP64) || defined(__LP64__)
+#if defined(_LP64) || defined(__LP64__)
   uint32_t hi = (uint32_t)(((uintptr_t)co)>>32);
   makecontext(ctx, (void (*)(void))_mco_main, 2, lo, hi);
 #else
@@ -315,10 +321,17 @@ static mco_result _mco_create(mco_coro* co, mco_desc* desc) {
   return MCO_SUCCESS;
 }
 
-static mco_result _mco_destroy(mco_coro* co) {
+static mco_result _mco_destroy_context(mco_coro* co) {
   _MCO_UNUSED(co);
   /* Nothing to do. */
   return MCO_SUCCESS;
+}
+
+static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
+   /* Add enough space to hold mco_coro and _mco_ucontext. */
+  int extra_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_ucontext), 16);
+  desc->coro_size = _mco_align_forward(stack_size + extra_size, 4096);
+  desc->stack_size = stack_size; /* This is just a hint, it won't be the real one. */
 }
 
 #endif /* MCO_USE_UCONTEXT*/
@@ -367,7 +380,7 @@ static mco_result _mco_jumpout(mco_coro* co) {
   return MCO_SUCCESS;
 }
 
-static mco_result _mco_create(mco_coro* co, mco_desc* desc) {
+static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context address. */
   uintptr_t co_addr = (uintptr_t)co;
   uintptr_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
@@ -383,46 +396,71 @@ static mco_result _mco_create(mco_coro* co, mco_desc* desc) {
   return MCO_SUCCESS;
 }
 
-static mco_result _mco_destroy(mco_coro* co) {
+static mco_result _mco_destroy_context(mco_coro* co) {
   _mco_fcontext* context = (_mco_fcontext*)co->context;
   DeleteFiber(context->fib);
   context->fib = NULL;
   return MCO_SUCCESS;
 }
 
-#endif
+static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
+  desc->coro_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_fcontext), 16);
+  desc->stack_size = stack_size;
+}
+
+#endif /* MCO_USE_FIBERS */
 
 /* ---------------------------------------------------------------------------------------------- */
 
 mco_desc mco_desc_init(mco_func func, uintptr_t stack_size) {
   if(stack_size != 0) {
-    if(stack_size < MCO_MIN_STACKSIZE) {
-      stack_size = MCO_MIN_STACKSIZE;
+    /* Stack size should be at least MCO_MIN_STACK_SIZE. */
+    if(stack_size < MCO_MIN_STACK_SIZE) {
+      stack_size = MCO_MIN_STACK_SIZE;
     }
   } else {
-    stack_size = MCO_DEFAULT_STACKSIZE;
+    stack_size = MCO_DEFAULT_STACK_SIZE;
   }
   mco_desc desc;
-  memset(&desc, 0, sizeof(desc));
-#if defined(MCO_USE_UCONTEXT)
-  desc.coro_size = stack_size + 4096;
-  desc.stack_size = stack_size; /* This is just a hint, will not be the real one. */
-#elif defined(MCO_USE_FIBERS)
-  desc.coro_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_fcontext), 16);
-  desc.stack_size = stack_size;
+  memset(&desc, 0, sizeof(mco_desc));
+#ifndef MCO_NO_DEFAULT_ALLOCATORS
+  /* Set default allocators. */
+  desc.malloc_cb = mco_malloc;
+  desc.free_cb = mco_free;
 #endif
   desc.func = func;
+  _mco_init_desc_sizes(&desc, stack_size);
   return desc;
+}
+
+static mco_result _mco_validate_desc(mco_desc* desc) {
+  if(!desc->func) {
+    MCO_LOG("invalid function in coroutine description");
+    return MCO_INVALID_ARGUMENTS;
+  }
+  if(desc->stack_size < MCO_MIN_STACK_SIZE) {
+    MCO_LOG("coroutine stack size is too small");
+    return MCO_INVALID_ARGUMENTS;
+  }
+  if(desc->coro_size < sizeof(mco_coro)) {
+    MCO_LOG("coroutine size is invalid");
+    return MCO_INVALID_ARGUMENTS;
+  }
+  if(!desc->malloc_cb || !desc->free_cb) {
+    MCO_LOG("coroutine allocator malloc or free is unset");
+    return MCO_INVALID_ARGUMENTS;
+  }
+  return MCO_SUCCESS;
 }
 
 mco_result mco_init(mco_coro* co, mco_desc* desc) {
   memset(co, 0, sizeof(mco_coro));
-  /* We expect a function and valid stack size. */
-  if(!desc->func || desc->coro_size == 0 || desc->stack_size == 0) {
-    MCO_LOG("invalid function or coroutine size arguments while initializing coroutine");
-    return MCO_INVALID_ARGUMENTS;
-  }
-  mco_result res = _mco_create(co, desc);
+  /* Validate coroutine description. */
+  mco_result res = _mco_validate_desc(desc);
+  if(res != MCO_SUCCESS)
+    return res;
+  /* Create the coroutine. */
+  res = _mco_create_context(co, desc);
   if(res != MCO_SUCCESS)
     return res;
   co->state = MCO_SUSPENDED; /* We initialize in suspended state. */
@@ -433,32 +471,26 @@ mco_result mco_init(mco_coro* co, mco_desc* desc) {
 }
 
 mco_result mco_uninit(mco_coro* co) {
+  /* Ignore when already dead. */
+  if(co->state == MCO_DEAD)
+    return MCO_SUCCESS;
   /* Cannot uninitialize while running. */
-  if(!(co->state == MCO_DEAD || co->state == MCO_SUSPENDED)) {
+  if(co->state != MCO_SUSPENDED) {
     MCO_LOG("attempt to uninitialize a coroutine that is not dead or suspended");
     return MCO_INVALID_OPERATION;
   }
   /* The coroutine is now dead and cannot be used anymore. */
   co->state = MCO_DEAD;
-  return _mco_destroy(co);
+  return _mco_destroy_context(co);
 }
 
 mco_result mco_create(mco_coro** out_co, mco_desc* desc) {
   /* Setup allocator. */
-#ifndef MCO_NO_DEFAULT_ALLOCATORS
-  if(!desc->malloc_cb) {
-    desc->malloc_cb = mco_malloc;
-  }
-  if(!desc->free_cb) {
-    desc->free_cb = mco_free;
-  }
-#else
   if(!desc->malloc_cb || !desc->free_cb) {
     *out_co = NULL;
     MCO_LOG("invalid malloc and free allocators while creating coroutine");
     return MCO_INVALID_ARGUMENTS;
   }
-#endif
   /* Allocate the coroutine */
   mco_coro *co = (mco_coro*)desc->malloc_cb(desc->coro_size, desc->alloc_user_data);
   if(!co) {
@@ -466,9 +498,6 @@ mco_result mco_create(mco_coro** out_co, mco_desc* desc) {
     *out_co = NULL;
     return MCO_OUT_OF_MEMORY;
   }
-#ifdef MCO_ZERO_MEMORY
-  memset(co, 0, desc->coro_size);
-#endif
   /* Initialize the coroutine */
   mco_result res = mco_init(co, desc);
   if(res != MCO_SUCCESS) {
@@ -521,11 +550,10 @@ mco_result mco_yield(mco_coro *co) {
 }
 
 mco_result mco_set_user_data(mco_coro* co, const void* src, size_t len) {
-  if(len > 0) {
-    if(len > MCO_MAX_DATA_SIZE) {
-      MCO_LOG("not enough space for setting user data");
-      return MCO_NOT_ENOUGH_SPACE;
-    }
+  if(len > MCO_USER_DATA_SIZE) {
+    MCO_LOG("not enough space for setting user data");
+    return MCO_NOT_ENOUGH_SPACE;
+  } else if(len > 0) {
     if(!src) {
       MCO_LOG("invalid pointer when setting user data");
       return MCO_INVALID_POINTER;
@@ -543,18 +571,17 @@ mco_result mco_set_user_data(mco_coro* co, const void* src, size_t len) {
 }
 
 mco_result mco_get_user_data(mco_coro* co, void* dest, size_t maxlen) {
-  size_t len = co->user_data_size;
-  if(len == 0) {
+  if(co->user_data_size == 0) {
     return MCO_NO_USER_DATA;
-  } else if(len > maxlen) {
+  } else if(co->user_data_size > maxlen) {
     MCO_LOG("not enough space for getting user data");
     return MCO_NOT_ENOUGH_SPACE;
-  } else if(len > 0) {
+  } else if(co->user_data_size > 0) {
     if(!dest) {
       MCO_LOG("invalid pointer when getting user data");
       return MCO_INVALID_POINTER;
     }
-    memcpy(dest, &co->user_data[0], len);
+    memcpy(dest, &co->user_data[0], co->user_data_size);
   }
   return MCO_SUCCESS;
 }
