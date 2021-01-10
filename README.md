@@ -84,7 +84,7 @@ int main() {
   assert(res == MCO_SUCCESS);
   // The coroutine finished and should be now dead.
   assert(mco_status(co) == MCO_DEAD);
-  // Call `mco_destrou` to destroy the coroutine.
+  // Call `mco_destroy` to destroy the coroutine.
   res = mco_destroy(co);
   assert(res == MCO_SUCCESS);
   return 0;
