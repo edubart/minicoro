@@ -30,26 +30,26 @@ void coro_entry(mco_coro* co) {
   assert(mco_running() == co);
   assert(mco_status(co) == MCO_RUNNING);
 
-  /* Get user data 1 */
+  /* Get io data 1 */
   assert(mco_get_io_data(co, buffer, 128) == MCO_SUCCESS);
   assert(mco_get_io_data_size(co) == 6);
   assert(strcmp(buffer, "hello") == 0);
   puts(buffer);
 
-  /* Set user data 1 */
+  /* Set io data 1 */
   ret = 1;
   assert(mco_set_io_data(co, &ret, sizeof(ret)) == MCO_SUCCESS);
 
   /* Yield 1 */
   assert(mco_yield(co) == MCO_SUCCESS);
 
-  /* Get user data 2 */
+  /* Get io data 2 */
   assert(mco_get_io_data(co, buffer, 128) == MCO_SUCCESS);
   assert(mco_get_io_data_size(co) == 7);
   assert(strcmp(buffer, "world!") == 0);
   puts(buffer);
 
-  /* Set user data 2 */
+  /* Set io data 2 */
   ret = 2;
   assert(mco_set_io_data(co, &ret, sizeof(ret)) == MCO_SUCCESS);
 
@@ -75,7 +75,7 @@ int main() {
   assert(mco_create(&co, &desc) == MCO_SUCCESS);
   assert(mco_status(co) == MCO_SUSPENDED);
 
-  /* Set user data 1 */
+  /* Set io data 1 */
   const char first_word[] = "hello";
   assert(mco_set_io_data(co, first_word, sizeof(first_word)) == MCO_SUCCESS);
 
@@ -83,11 +83,11 @@ int main() {
   assert(mco_resume(co) == MCO_SUCCESS);
   assert(mco_status(co) == MCO_SUSPENDED);
 
-  /* Get user data 1 */
+  /* Get io data 1 */
   assert(mco_get_io_data(co, &ret, sizeof(ret)) == MCO_SUCCESS);
   assert(ret == 1);
 
-  /* Set user data 2 */
+  /* Set io data 2 */
   const char second_word[] = "world!";
   assert(mco_set_io_data(co, second_word, sizeof(second_word)) == MCO_SUCCESS);
 
@@ -95,7 +95,7 @@ int main() {
   assert(mco_resume(co) == MCO_SUCCESS);
   assert(mco_status(co) == MCO_DEAD);
 
-  /* Get user data 2 */
+  /* Get io data 2 */
   assert(mco_get_io_data(co, &ret, sizeof(ret)) == MCO_SUCCESS);
   assert(ret == 2);
 
