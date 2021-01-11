@@ -306,6 +306,7 @@ MCO_API const char* mco_result_description(mco_result res); /* Get the descripti
     #define _MCO_THREAD_LOCAL __thread
   #else /* No thread local support, `mco_running` will be thread unsafe. */
     #define _MCO_THREAD_LOCAL
+    #define MCO_NO_MULTITHREAD
   #endif
 #endif
 
@@ -337,7 +338,7 @@ static _MCO_THREAD_LOCAL mco_coro* mco_current_co = NULL;
 
 static void _mco_prepare_jumpin(mco_coro* co) {
   /* Set the old coroutine to normal state and update it. */
-  mco_coro* prev_co = mco_current_co;
+  mco_coro* prev_co = mco_running(); /* Must access through `mco_running`. */
   co->prev_co = prev_co;
   if(prev_co) {
     MCO_ASSERT(prev_co->state == MCO_RUNNING);
@@ -348,7 +349,7 @@ static void _mco_prepare_jumpin(mco_coro* co) {
 
 static void _mco_prepare_jumpout(mco_coro* co) {
   /* Switch back to the previous running coroutine. */
-  MCO_ASSERT(mco_current_co == co);
+  MCO_ASSERT(mco_running() == co);
   mco_coro* prev_co = co->prev_co;
   co->prev_co = NULL;
   if(prev_co) {
@@ -963,9 +964,24 @@ mco_result mco_reset_io_data(mco_coro* co) {
   return mco_set_io_data(co, NULL, 0);
 }
 
+#ifdef MCO_NO_MULTITHREAD
 mco_coro* mco_running(void) {
   return mco_current_co;
 }
+#else
+static mco_coro* _mco_running(void) {
+  return mco_current_co;
+}
+mco_coro* mco_running(void) {
+  /*
+  Compilers aggressively optimize the use of TLS by caching loads.
+  Since fiber code can migrate between threads it’s possible for the load to be stale.
+  To prevent this from happening we avoid inline functions.
+  */
+  mco_coro* (*volatile func)(void) = _mco_running;
+  return func();
+}
+#endif
 
 const char* mco_result_description(mco_result res) {
   switch(res) {
