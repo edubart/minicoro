@@ -168,16 +168,14 @@ mco_state mco_status(mco_coro* co);                           /* Returns the sta
 void* mco_get_user_data(mco_coro* co);                        /* Get coroutine user data supplied on coroutine creation. */
 
 /* IO data interface functions. The IO data interface is used to pass values between yield and resume. */
-mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len);          /* Set the coroutine IO data. Use to send values between yield and resume. */
-mco_result mco_get_io_data(mco_coro* co, void* dest, size_t maxlen);            /* Get the coroutine IO data. Use to receive values between yield and resume. */
-size_t mco_get_io_data_size();                                                  /* Get the coroutine IO data size. */
-mco_result mco_reset_io_data(mco_coro* co);                                     /* Clear the coroutine IO data. Call this to reset IO data before a yield or resume. */
-mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen);  /* Shortcut for `mco_get_io_data` + `mco_reset_io_data`. */
+mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len);  /* Set the coroutine IO data. Use to send values between yield and resume. */
+mco_result mco_reset_io_data(mco_coro* co);                             /* Clear the coroutine IO data. Call this to reset IO data before a yield or resume. */
+size_t mco_get_io_data(mco_coro* co, void* dest, size_t len);           /* Get the coroutine IO data. Use to receive values between yield and resume. */
+size_t mco_get_io_data_size(mco_coro* co);                              /* Get the coroutine IO data size. */
 
 /* Misc functions. */
-mco_coro* mco_running();                            /* Returns the running coroutine for the current thread. */
+mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
 const char* mco_result_description(mco_result res); /* Get the description of a result. */
-
 ```
 
 # Complete Example
@@ -200,14 +198,13 @@ static void fibonacci_coro(mco_coro* co) {
 
   /* Retrieve max value. */
   unsigned long max;
-  mco_result res = mco_get_io_data(co, &max, sizeof(max));
-  if(res != MCO_SUCCESS)
-    fail("Failed to retrieve coroutine io data", res);
+  if(mco_get_io_data(co, &max, sizeof(max)) != sizeof(max))
+    fail("Failed to retrieve coroutine io data", MCO_GENERIC_ERROR);
 
   while(1) {
     /* Yield the next Fibonacci number. */
     mco_set_io_data(co, &m, sizeof(m));
-    res = mco_yield(co);
+    mco_result res = mco_yield(co);
     if(res != MCO_SUCCESS)
       fail("Failed to yield coroutine", res);
 
@@ -240,8 +237,8 @@ int main() {
 
     /* Retrieve io data set in last coroutine yield. */
     unsigned long ret = 0;
-    if(mco_get_io_data(co, &ret, sizeof(ret)) != MCO_SUCCESS)
-      fail("Failed to retrieve coroutine io data", res);
+    if(mco_get_io_data(co, &ret, sizeof(ret)) != sizeof(ret))
+      fail("Failed to retrieve coroutine io data", MCO_GENERIC_ERROR);
     printf("fib %d = %lu\n", counter, ret);
     counter = counter + 1;
   }

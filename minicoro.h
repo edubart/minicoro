@@ -172,13 +172,13 @@ typedef enum mco_state {
 /* Coroutine result codes. */
 typedef enum mco_result {
   MCO_SUCCESS = 0,
+  MCO_GENERIC_ERROR,
   MCO_INVALID_POINTER,
   MCO_INVALID_COROUTINE,
   MCO_NOT_SUSPENDED,
   MCO_NOT_RUNNING,
   MCO_MAKE_CONTEXT_ERROR,
   MCO_SWITCH_CONTEXT_ERROR,
-  MCO_NO_IO_DATA,
   MCO_NOT_ENOUGH_SPACE,
   MCO_OUT_OF_MEMORY,
   MCO_INVALID_ARGUMENTS,
@@ -225,11 +225,10 @@ MCO_API mco_state mco_status(mco_coro* co);                           /* Returns
 MCO_API void* mco_get_user_data(mco_coro* co);                        /* Get coroutine user data supplied on coroutine creation. */
 
 /* IO data interface functions. The IO data interface is used to pass values between yield and resume. */
-MCO_API mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len);          /* Set the coroutine IO data. Use to send values between yield and resume. */
-MCO_API mco_result mco_get_io_data(mco_coro* co, void* dest, size_t maxlen);            /* Get the coroutine IO data. Use to receive values between yield and resume. */
-MCO_API size_t mco_get_io_data_size(mco_coro* co);                                              /* Get the coroutine IO data size. */
-MCO_API mco_result mco_reset_io_data(mco_coro* co);                                     /* Clear the coroutine IO data. Call this to reset IO data before a yield or resume. */
-MCO_API mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen);  /* Shortcut for `mco_get_io_data` + `mco_reset_io_data`. */
+MCO_API mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len);  /* Set the coroutine IO data. Use to send values between yield and resume. */
+MCO_API mco_result mco_reset_io_data(mco_coro* co);                             /* Clear the coroutine IO data. Call this to reset IO data before a yield or resume. */
+MCO_API size_t mco_get_io_data(mco_coro* co, void* dest, size_t len);           /* Get the coroutine IO data. Use to receive values between yield and resume. */
+MCO_API size_t mco_get_io_data_size(mco_coro* co);                              /* Get the coroutine IO data size. */
 
 /* Misc functions. */
 MCO_API mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
@@ -901,10 +900,6 @@ mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len) {
     MCO_LOG("attempt to use an invalid coroutine");
     return MCO_INVALID_COROUTINE;
   }
-  if(!co) {
-    MCO_LOG("attempt to yield an invalid coroutine");
-    return MCO_NOT_RUNNING;
-  }
   if(len > MCO_IO_DATA_SIZE) {
     MCO_LOG("attempt to set io data from a buffer that is too large");
     return MCO_NOT_ENOUGH_SPACE;
@@ -925,24 +920,17 @@ mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len) {
   return MCO_SUCCESS;
 }
 
-mco_result mco_get_io_data(mco_coro* co, void* dest, size_t maxlen) {
-  if(!co) {
-    MCO_LOG("attempt to use an invalid coroutine");
-    return MCO_INVALID_COROUTINE;
+size_t mco_get_io_data(mco_coro* co, void* dest, size_t len) {
+  if(!co || !dest) {
+    return 0;
   }
-  if(co->io_data_size == 0) {
-    return MCO_NO_IO_DATA;
-  } else if(co->io_data_size > maxlen) {
-    MCO_LOG("attempt to get a io data into a buffer that does not have enough space");
-    return MCO_NOT_ENOUGH_SPACE;
-  } else if(co->io_data_size > 0) {
-    if(!dest) {
-      MCO_LOG("attempt to get io data into an invalid pointer");
-      return MCO_INVALID_POINTER;
-    }
-    memcpy(dest, &co->io_data[0], co->io_data_size);
+  if(len > co->io_data_size) {
+    len = co->io_data_size;
   }
-  return MCO_SUCCESS;
+  if(len > 0) {
+    memcpy(dest, &co->io_data[0], len);
+  }
+  return len;
 }
 
 size_t mco_get_io_data_size(mco_coro* co) {
@@ -956,14 +944,6 @@ mco_result mco_reset_io_data(mco_coro* co) {
   return mco_set_io_data(co, NULL, 0);
 }
 
-mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen) {
-  mco_result res = mco_get_io_data(co, dest, maxlen);
-  if(res != MCO_SUCCESS) {
-    return res;
-  }
-  return mco_reset_io_data(co);
-}
-
 mco_coro* mco_running(void) {
   return mco_current_co;
 }
@@ -972,6 +952,8 @@ const char* mco_result_description(mco_result res) {
   switch(res) {
     case MCO_SUCCESS:
       return "No error";
+    case MCO_GENERIC_ERROR:
+      return "Generic error";
     case MCO_INVALID_POINTER:
       return "Invalid pointer";
     case MCO_INVALID_COROUTINE:
@@ -984,8 +966,6 @@ const char* mco_result_description(mco_result res) {
       return "Make context error";
     case MCO_SWITCH_CONTEXT_ERROR:
       return "Switch context error";
-    case MCO_NO_IO_DATA:
-      return "No IO data";
     case MCO_NOT_ENOUGH_SPACE:
       return "Not enough space";
     case MCO_OUT_OF_MEMORY:
