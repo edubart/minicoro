@@ -146,6 +146,10 @@ MIT, see end of file.
 #ifndef MINICORO_H
 #define MINICORO_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Public API qualifier. */
 #ifndef MCO_API
 #define MCO_API extern
@@ -236,9 +240,17 @@ MCO_API size_t mco_get_io_data_size(mco_coro* co);                              
 MCO_API mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
 MCO_API const char* mco_result_description(mco_result res); /* Get the description of a result. */
 
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* MINICORO_H */
 
 #ifdef MINICORO_IMPL
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* ---------------------------------------------------------------------------------------------- */
 
@@ -1013,6 +1025,10 @@ const char* mco_result_description(mco_result res) {
       return "Unknown error";
   }
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MINICORO_IMPL */
 
