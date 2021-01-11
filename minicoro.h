@@ -24,6 +24,7 @@ The API is inspired by Lua coroutines but with C use in mind.
 - Lightweight and efficient.
 - Works in any C89 compiler.
 - Error prone API, returning proper error codes on misuse.
+- Support running with valgrind.
 
 # Implementation details
 
@@ -133,6 +134,7 @@ The following can be defined to change the library behavior:
 - `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding IO data, intended for garbage collected environments.
 - `MCO_USE_ASM`               - Force use of assembly context switch implementation.
 - `MCO_USE_UCONTEXT`          - Force use ucontext of context switch implementation.
+- `MCO_USE_VALGRIND`          - Define if you want run with valgrind to fix accessing memory errors.
 
 # License
 
@@ -557,7 +559,9 @@ static void _mco_wrap_main(uint32_t lo) {
 #endif
 
 static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
-  swapcontext(from, to);
+  int res = swapcontext(from, to);
+  _MCO_UNUSED(res);
+  MCO_ASSERT(res == 0);
 }
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, uintptr_t stack_size) {
@@ -581,7 +585,14 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, 
 
 #endif /* defined(MCO_USE_UCONTEXT) */
 
+#ifdef MCO_USE_VALGRIND
+#include <valgrind/valgrind.h>
+#endif
+
 typedef struct _mco_context {
+#ifdef MCO_USE_VALGRIND
+  unsigned int valgrind_stack_id;
+#endif
   _mco_ctxbuf ctx;
   _mco_ctxbuf back_ctx;
 } _mco_context;
@@ -614,16 +625,26 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
 #endif
   /* Make the context. */
   mco_result res = _mco_makectx(co, &context->ctx, stack_ptr, stack_size);
-  if(res != MCO_SUCCESS)
+  if(res != MCO_SUCCESS) {
     return res;
+  }
+#ifdef MCO_USE_VALGRIND
+  context->valgrind_stack_id = VALGRIND_STACK_REGISTER(stack_addr, stack_addr + stack_size);
+#endif
   co->context = context;
   return MCO_SUCCESS;
 }
 
-static mco_result _mco_destroy_context(mco_coro* co) {
+static void _mco_destroy_context(mco_coro* co) {
+#ifdef MCO_USE_VALGRIND
+  _mco_context* context = (_mco_context*)co->context;
+  if(context && context->valgrind_stack_id != 0) {
+    VALGRIND_STACK_DEREGISTER(context->valgrind_stack_id);
+    context->valgrind_stack_id = 0;
+  }
+#else
   _MCO_UNUSED(co);
-  /* Nothing to do. */
-  return MCO_SUCCESS;
+#endif
 }
 
 static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
@@ -689,13 +710,12 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   return MCO_SUCCESS;
 }
 
-static mco_result _mco_destroy_context(mco_coro* co) {
+static void _mco_destroy_context(mco_coro* co) {
   _mco_fcontext* context = (_mco_fcontext*)co->context;
-  if(context->fib) {
+  if(context && context->fib) {
     DeleteFiber(context->fib);
     context->fib = NULL;
   }
-  return MCO_SUCCESS;
 }
 
 static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
@@ -782,7 +802,8 @@ mco_result mco_uninit(mco_coro* co) {
   }
   /* The coroutine is now dead and cannot be used anymore. */
   co->state = MCO_DEAD;
-  return _mco_destroy_context(co);
+  _mco_destroy_context(co);
+  return MCO_SUCCESS;
 }
 
 mco_result mco_create(mco_coro** out_co, mco_desc* desc) {

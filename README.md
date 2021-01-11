@@ -25,6 +25,7 @@ The library assembly implementation is inspired by [Lua Coco](https://coco.luaji
 - Lightweight and efficient.
 - Works in any C89 compiler.
 - Error prone API, returning proper error codes on misuse.
+- Support running with valgrind.
 
 # Implementation details
 
@@ -134,6 +135,7 @@ The following can be defined to change the library behavior:
 - `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding IO data, intended for garbage collected environments.
 - `MCO_USE_ASM`               - Force use of assembly context switch implementation.
 - `MCO_USE_UCONTEXT`          - Force use ucontext of context switch implementation.
+- `MCO_USE_VALGRIND`          - Define if you want run with valgrind to fix accessing memory errors.
 
 # Cheatsheet
 
