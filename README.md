@@ -19,14 +19,16 @@ for the [Nelua](https://github.com/edubart/nelua-lang) programming language.
 - Cross platform.
 - Minimal, self contained and no external dependencies.
 - Readable sources and documented.
+- Implemented via assembly, ucontext or fibers.
+- Lightweight and efficient.
 - Works in any C89 compiler.
-- Error prone API, return proper error codes on misuse.
+- Error prone API, returning proper error codes on misuse.
 
 # Implementation details
 
-On POSIX it uses ucontext API and on Windows it uses the Fibers API.
-In the future it may use `_setjmp`/`_longjmp` on POSIX system,
-because it would perform context switching a little faster (no syscalls).
+On Unix systems the context switching is implemented via assembly instructions for
+x86/x86_64 and aarch64 architectures otherwise fallbacks to ucontext implementation.
+On Windows the context switching is implemented via the Fibers API.
 
 # Limitations
 
@@ -128,6 +130,8 @@ The following can be defined to change the library behavior:
 - `MCO_NO_MULTITHREAD`        - Disable multithread usage. Multithread is supported when `thread_local` is supported.
 - `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
 - `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding IO data, intended for garbage collected environments.
+- `MCO_USE_ASM`               - Force use of assembly context switch implementation.
+- `MCO_USE_UCONTEXT`          - Force use ucontext of context switch implementation.
 
 # Cheatsheet
 

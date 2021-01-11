@@ -20,12 +20,16 @@ The API is inspired by Lua coroutines but with C use in mind.
 - Cross platform.
 - Minimal, self contained and no external dependencies.
 - Readable sources and documented.
+- Implemented via assembly, ucontext or fibers.
+- Lightweight and efficient.
 - Works in any C89 compiler.
 - Error prone API, returning proper error codes on misuse.
 
 # Implementation details
 
-On POSIX it uses ucontext API and on Windows it uses the Fibers API.
+On Unix systems the context switching is implemented via assembly instructions for
+x86/x86_64 and aarch64 architectures otherwise fallbacks to ucontext implementation.
+On Windows the context switching is implemented via the Fibers API.
 
 # Limitations
 
@@ -127,6 +131,8 @@ The following can be defined to change the library behavior:
 - `MCO_NO_MULTITHREAD`        - Disable multithread usage. Multithread is supported when `thread_local` is supported.
 - `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
 - `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding IO data, intended for garbage collected environments.
+- `MCO_USE_ASM`               - Force use of assembly context switch implementation.
+- `MCO_USE_UCONTEXT`          - Force use ucontext of context switch implementation.
 
 # License
 
@@ -242,10 +248,21 @@ MCO_API const char* mco_result_description(mco_result res); /* Get the descripti
 #define MCO_DEFAULT_STACK_SIZE 57344 /* Don't use multiples of 64K to avoid D-cache aliasing conflicts. */
 #endif
 
-#ifdef _WIN32
-#define MCO_USE_FIBERS
-#else
-#define MCO_USE_UCONTEXT
+/* Detect implementation based on OS, arch and compiler. */
+#if !defined(MCO_USE_UCONTEXT) && !defined(MCO_USE_FIBERS) && !defined(MCO_USE_ASM)
+  #ifdef _WIN32
+    #define MCO_USE_FIBERS
+  #else
+    #if __GNUC__ >= 3 /* Assembly extension supported. */
+      #if defined(__x86_64__) || defined(__i386) || defined(__i386__) || defined(__aarch64__)
+        #define MCO_USE_ASM
+      #else
+        #define MCO_USE_UCONTEXT
+      #endif
+    #else
+      #define MCO_USE_UCONTEXT
+    #endif
+  #endif
 #endif
 
 #define _MCO_UNUSED(x) (void)(x)
@@ -337,10 +354,10 @@ static void _mco_prepare_jumpout(mco_coro* co) {
   mco_current_co = prev_co;
 }
 
-static mco_result _mco_jumpin(mco_coro* co);
-static mco_result _mco_jumpout(mco_coro* co);
+static void _mco_jumpin(mco_coro* co);
+static void _mco_jumpout(mco_coro* co);
 
-static void _mco_main_inner(mco_coro* co) {
+static void _mco_main(mco_coro* co) {
   co->func(co); /* Run the coroutine function. */
   co->state = MCO_DEAD; /* Coroutine finished successfully, set state to dead. */
   _mco_jumpout(co); /* Jump back to the old context .*/
@@ -348,78 +365,229 @@ static void _mco_main_inner(mco_coro* co) {
 
 /* ---------------------------------------------------------------------------------------------- */
 
-#ifdef MCO_USE_UCONTEXT
+#if defined(MCO_USE_UCONTEXT) || defined(MCO_USE_ASM)
 
-#include <ucontext.h>
+#ifdef MCO_USE_ASM
 
-typedef struct _mco_ucontext {
-  ucontext_t ctx;
-  ucontext_t back_ctx;
-} _mco_ucontext;
+#if defined(__x86_64__)
 
-static mco_result _mco_switch(ucontext_t* from, ucontext_t* to) {
-  if(swapcontext(from, to) == -1) {
-    /* This error is fatal, expect the library to be in a bad state when this happens. */
-    MCO_LOG("failed to swap ucontext");
-    return MCO_SWITCH_CONTEXT_ERROR;
-  }
+typedef struct _mco_ctxbuf {
+  void* buf[8]; /* rip, rsp, rbp, rbx, r12, r13, r14, r15 */
+} _mco_ctxbuf;
+
+static void _mco_wrap_main() {
+  __asm__ __volatile__ ("\tmovq %r13, %rdi\n\tjmpq *%r12\n");
+}
+
+static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+  __asm__ __volatile__ (
+    "leaq 1f(%%rip), %%rax\n\t"
+    "movq %%rax, (%0)\n\t" "movq %%rsp, 8(%0)\n\t" "movq %%rbp, 16(%0)\n\t"
+    "movq %%rbx, 24(%0)\n\t" "movq %%r12, 32(%0)\n\t" "movq %%r13, 40(%0)\n\t"
+    "movq %%r14, 48(%0)\n\t" "movq %%r15, 56(%0)\n\t"
+    "movq 56(%1), %%r15\n\t" "movq 48(%1), %%r14\n\t" "movq 40(%1), %%r13\n\t"
+    "movq 32(%1), %%r12\n\t" "movq 24(%1), %%rbx\n\t" "movq 16(%1), %%rbp\n\t"
+    "movq 8(%1), %%rsp\n\t" "jmpq *(%1)\n" "1:\n"
+    : "+S" (from), "+D" (to) :
+    : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
+}
+
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, uintptr_t stack_size) {
+  void** stack_high_ptr = (void**)((uintptr_t)stack_ptr + stack_size - sizeof(uintptr_t));
+  stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
+  ctx->buf[0] = (void*)(_mco_wrap_main);
+  ctx->buf[1] = (void*)(stack_high_ptr);
+  ctx->buf[4] = (void*)(_mco_main);
+  ctx->buf[5] = (void*)(co);
   return MCO_SUCCESS;
 }
 
-static mco_result _mco_jumpin(mco_coro* co) {
-  _mco_prepare_jumpin(co);
-  _mco_ucontext* context = (_mco_ucontext*)co->context;
-  return _mco_switch(&context->back_ctx, &context->ctx); /* Do the context switch. */
-}
+#elif defined(__i386) || defined(__i386__)
 
-static mco_result _mco_jumpout(mco_coro* co) {
-  _mco_prepare_jumpout(co);
-  _mco_ucontext* context = (_mco_ucontext*)co->context;
-  return _mco_switch(&context->ctx, &context->back_ctx); /* Do the context switch. */
-}
-
-#if defined(_LP64) || defined(__LP64__)
-static void _mco_main(uint32_t lo, uint32_t hi) {
-  mco_coro* co = (mco_coro*)(((uintptr_t)lo) | (((uintptr_t)hi) << 32)); /* Extract coroutine pointer. */
-  _mco_main_inner(co);
+#ifdef __PIC__
+typedef struct _mco_ctxbuf {
+  void* buf[4]; /* eip, esp, ebp, ebx */
+} _mco_ctxbuf;
+static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+  __asm__ __volatile__ (
+    "call 1f\n" "1:\tpopl %%eax\n\t" "addl $(2f-1b),%%eax\n\t"
+    "movl %%eax, (%0)\n\t" "movl %%esp, 4(%0)\n\t"
+    "movl %%ebp, 8(%0)\n\t" "movl %%ebx, 12(%0)\n\t"
+    "movl 12(%1), %%ebx\n\t" "movl 8(%1), %%ebp\n\t"
+    "movl 4(%1), %%esp\n\t" "jmp *(%1)\n" "2:\n"
+    : "+S" (from), "+D" (to) : : "eax", "ecx", "edx", "memory", "cc");
 }
 #else
-static void _mco_main(uint32_t lo) {
+typedef struct _mco_ctxbuf {
+  void* buf[3]; /* eip, esp, ebp, ebx */
+} _mco_ctxbuf;
+static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+  __asm__ __volatile__ (
+    "movl $1f, (%0)\n\t" "movl %%esp, 4(%0)\n\t" "movl %%ebp, 8(%0)\n\t"
+    "movl 8(%1), %%ebp\n\t" "movl 4(%1), %%esp\n\t" "jmp *(%1)\n" "1:\n"
+    : "+S" (from), "+D" (to) : : "eax", "ebx", "ecx", "edx", "memory", "cc");
+}
+#endif /* __PIC__ */
+
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, uintptr_t stack_size) {
+  void** stack_high_ptr = (void**)((uintptr_t)stack_ptr + stack_size - 2*sizeof(uintptr_t));
+  stack_high_ptr[0] = (void*)(0xdeaddead);  /* Dummy return address. */
+  stack_high_ptr[1] = (void*)(co);
+  ctx->buf[0] = (void*)(_mco_main);
+  ctx->buf[1] = (void*)(stack_high_ptr);
+  return MCO_SUCCESS;
+}
+
+#elif defined(__aarch64__)
+
+typedef struct _mco_ctxbuf {
+  void* buf[22]; /* x19-x30, sp, lr, d8-d15 */
+} _mco_ctxbuf;
+
+void _mco_wrap_main();
+int _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to);
+
+__asm__(
+  ".text\n"
+  ".globl _mco_switch\n"
+  ".type _mco_switch #function\n"
+  ".hidden _mco_switch\n"
+  "_mco_switch:\n"
+  "  mov x10, sp\n"
+  "  mov x11, x30\n"
+  "  stp x19, x20, [x0, #(0*16)]\n"
+  "  stp x21, x22, [x0, #(1*16)]\n"
+  "  stp d8, d9, [x0, #(7*16)]\n"
+  "  stp x23, x24, [x0, #(2*16)]\n"
+  "  stp d10, d11, [x0, #(8*16)]\n"
+  "  stp x25, x26, [x0, #(3*16)]\n"
+  "  stp d12, d13, [x0, #(9*16)]\n"
+  "  stp x27, x28, [x0, #(4*16)]\n"
+  "  stp d14, d15, [x0, #(10*16)]\n"
+  "  stp x29, x30, [x0, #(5*16)]\n"
+  "  stp x10, x11, [x0, #(6*16)]\n"
+  "  ldp x19, x20, [x1, #(0*16)]\n"
+  "  ldp x21, x22, [x1, #(1*16)]\n"
+  "  ldp d8, d9, [x1, #(7*16)]\n"
+  "  ldp x23, x24, [x1, #(2*16)]\n"
+  "  ldp d10, d11, [x1, #(8*16)]\n"
+  "  ldp x25, x26, [x1, #(3*16)]\n"
+  "  ldp d12, d13, [x1, #(9*16)]\n"
+  "  ldp x27, x28, [x1, #(4*16)]\n"
+  "  ldp d14, d15, [x1, #(10*16)]\n"
+  "  ldp x29, x30, [x1, #(5*16)]\n"
+  "  ldp x10, x11, [x1, #(6*16)]\n"
+  "  mov sp, x10\n"
+  "  br x11\n"
+  ".size _mco_switch, .-_mco_switch\n"
+);
+
+__asm__(
+  ".text\n"
+  ".globl _mco_wrap_main\n"
+  ".type _mco_wrap_main #function\n"
+  ".hidden _mco_wrap_main\n"
+  "_mco_wrap_main:\n"
+  "  mov x0, x19\n"
+  "  mov x30, x21\n"
+  "  br x20\n"
+  ".size _mco_wrap_main, .-_mco_wrap_main\n"
+);
+
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, uintptr_t stack_size) {
+  void** stack_high_ptr = (void**)((uintptr_t)stack_ptr + stack_size);
+  ctx->buf[0] = (void*)(co);
+  ctx->buf[1] = (void*)(_mco_main);
+  ctx->buf[2] = (void*)(0xdeaddeaddeaddead); /* Dummy return address. */
+  ctx->buf[12] = (void*)((uintptr_t)(stack_high_ptr) & ~15);
+  ctx->buf[13] = (void*)(_mco_wrap_main);
+  return MCO_SUCCESS;
+}
+
+#else
+
+#error "Unsupported architecture for assembly backend."
+
+#endif /* ARCH */
+
+#elif defined(MCO_USE_UCONTEXT)
+
+#include <ucontext.h>
+
+typedef ucontext_t _mco_ctxbuf;
+
+#if defined(_LP64) || defined(__LP64__)
+static void _mco_wrap_main(uint32_t lo, uint32_t hi) {
+  mco_coro* co = (mco_coro*)(((uintptr_t)lo) | (((uintptr_t)hi) << 32)); /* Extract coroutine pointer. */
+  _mco_main(co);
+}
+#else
+static void _mco_wrap_main(uint32_t lo) {
   mco_coro* co = (mco_coro*)((uintptr_t)lo); /* Extract coroutine pointer. */
-  _mco_main_inner(co);
+  _mco_main(co);
 }
 #endif
+
+static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+  swapcontext(from, to);
+}
+
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, uintptr_t stack_size) {
+  /* Initialize ucontext. */
+  if(getcontext(ctx) != 0) {
+    MCO_LOG("failed to get ucontext");
+    return MCO_MAKE_CONTEXT_ERROR;
+  }
+  ctx->uc_link = NULL;  /* We never exit from _mco_wrap_main. */
+  ctx->uc_stack.ss_sp = stack_ptr;
+  ctx->uc_stack.ss_size = stack_size;
+  uint32_t lo = (uint32_t)((uintptr_t)co);
+#if defined(_LP64) || defined(__LP64__)
+  uint32_t hi = (uint32_t)(((uintptr_t)co)>>32);
+  makecontext(ctx, (void (*)(void))_mco_wrap_main, 2, lo, hi);
+#else
+  makecontext(ctx, (void (*)(void))_mco_wrap_main, 1, lo);
+#endif
+  return MCO_SUCCESS;
+}
+
+#endif /* defined(MCO_USE_UCONTEXT) */
+
+typedef struct _mco_context {
+  _mco_ctxbuf ctx;
+  _mco_ctxbuf back_ctx;
+} _mco_context;
+
+static void _mco_jumpin(mco_coro* co) {
+  _mco_prepare_jumpin(co);
+  _mco_context* context = (_mco_context*)co->context;
+  _mco_switch(&context->back_ctx, &context->ctx); /* Do the context switch. */
+}
+
+static void _mco_jumpout(mco_coro* co) {
+  _mco_prepare_jumpout(co);
+  _mco_context* context = (_mco_context*)co->context;
+  _mco_switch(&context->ctx, &context->back_ctx); /* Do the context switch. */
+}
 
 static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context and stack address. */
   uintptr_t co_addr = (uintptr_t)co;
   uintptr_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
-  uintptr_t stack_addr = _mco_align_forward(context_addr + sizeof(_mco_ucontext), 16);
+  uintptr_t stack_addr = _mco_align_forward(context_addr + sizeof(_mco_context), 16);
   /* Initialize context. */
-  _mco_ucontext* context = (_mco_ucontext*)context_addr;
-  memset(context, 0, sizeof(_mco_ucontext));
+  _mco_context* context = (_mco_context*)context_addr;
+  memset(context, 0, sizeof(_mco_context));
   /* Initialize stack. */
   void *stack_ptr = (void*)stack_addr;
   uintptr_t stack_size = co_addr + desc->coro_size - stack_addr;
 #ifdef MCO_ZERO_MEMORY
   memset(stack_ptr, 0, stack_size);
 #endif
-  /* Initialize ucontext. */
-  ucontext_t* ctx = &context->ctx;
-  if(getcontext(ctx) != 0) {
-    MCO_LOG("failed to get ucontext");
-    return MCO_MAKE_CONTEXT_ERROR;
-  }
-  ctx->uc_link = NULL;  /* We never exit from _mco_main. */
-  ctx->uc_stack.ss_sp = stack_ptr;
-  ctx->uc_stack.ss_size = stack_size;
-  uint32_t lo = (uint32_t)((uintptr_t)co);
-#if defined(_LP64) || defined(__LP64__)
-  uint32_t hi = (uint32_t)(((uintptr_t)co)>>32);
-  makecontext(ctx, (void (*)(void))_mco_main, 2, lo, hi);
-#else
-  makecontext(ctx, (void (*)(void))_mco_main, 1, lo);
-#endif
+  /* Make the context. */
+  mco_result res = _mco_makectx(co, &context->ctx, stack_ptr, stack_size);
+  if(res != MCO_SUCCESS)
+    return res;
   co->context = context;
   return MCO_SUCCESS;
 }
@@ -431,13 +599,13 @@ static mco_result _mco_destroy_context(mco_coro* co) {
 }
 
 static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
-   /* Add enough space to hold mco_coro and _mco_ucontext. */
-  int extra_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_ucontext), 16);
+   /* Add enough space to hold mco_coro and _mco_context. */
+  int extra_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_context), 16);
   desc->coro_size = _mco_align_forward(stack_size + extra_size, 4096);
   desc->stack_size = stack_size; /* This is just a hint, it won't be the real one. */
 }
 
-#endif /* MCO_USE_UCONTEXT*/
+#endif /* defined(MCO_USE_UCONTEXT) || defined(MCO_USE_ASM) */
 
 /* ---------------------------------------------------------------------------------------------- */
 
@@ -452,34 +620,29 @@ typedef struct _mco_fcontext {
   uintptr_t stack_size;
 } _mco_fcontext;
 
-static mco_result _mco_jumpin(mco_coro* co) {
+static void _mco_jumpin(mco_coro* co) {
   void *cur_fib = GetCurrentFiber();
   if(!cur_fib || cur_fib == (void*)0x1e00) { /* See http://blogs.msdn.com/oldnewthing/archive/2004/12/31/344799.aspx */
     cur_fib = ConvertThreadToFiber(NULL);
   }
-  if(!cur_fib) {
-    MCO_LOG("failed to get back fiber");
-    return MCO_SWITCH_CONTEXT_ERROR;
-  }
+  MCO_ASSERT(cur_fib != NULL);
   _mco_fcontext* context = (_mco_fcontext*)co->context;
   context->back_fib = cur_fib;
   _mco_prepare_jumpin(co);
   SwitchToFiber(context->fib);
-  return MCO_SUCCESS;
 }
 
-static CALLBACK void _mco_main(mco_coro* co) {
-  _mco_main_inner(co);
+static CALLBACK void _mco_wrap_main(mco_coro* co) {
+  _mco_main(co);
 }
 
-static mco_result _mco_jumpout(mco_coro* co) {
+static void _mco_jumpout(mco_coro* co) {
   _mco_prepare_jumpout(co);
   _mco_fcontext* context = (_mco_fcontext*)co->context;
   void* back_fib = context->back_fib;
   MCO_ASSERT(back_fib != NULL);
   context->back_fib = NULL;
   SwitchToFiber(back_fib);
-  return MCO_SUCCESS;
 }
 
 static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
@@ -488,7 +651,7 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   uintptr_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
   _mco_fcontext* context = (_mco_fcontext*)context_addr;
   /* Create the fiber. */
-  void* fib = CreateFiber(desc->stack_size, (LPFIBER_START_ROUTINE)_mco_main, co);
+  void* fib = CreateFiber(desc->stack_size, (LPFIBER_START_ROUTINE)_mco_wrap_main, co);
   if(!fib) {
     MCO_LOG("failed to create fiber");
     return MCO_MAKE_CONTEXT_ERROR;
@@ -651,7 +814,8 @@ mco_result mco_resume(mco_coro* co) {
     return MCO_NOT_SUSPENDED;
   }
   co->state = MCO_RUNNING; /* The coroutine is now running. */
-  return _mco_jumpin(co);
+  _mco_jumpin(co);
+  return MCO_SUCCESS;
 }
 
 mco_result mco_yield(mco_coro* co) {
@@ -664,7 +828,8 @@ mco_result mco_yield(mco_coro* co) {
     return MCO_NOT_RUNNING;
   }
   co->state = MCO_SUSPENDED; /* The coroutine is now suspended. */
-  return _mco_jumpout(co);
+  _mco_jumpout(co);
+  return MCO_SUCCESS;
 }
 
 mco_state mco_status(mco_coro* co) {

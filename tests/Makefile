@@ -1,8 +1,10 @@
 CC=gcc
 OUTEXT=
-#CC=x86_64-w64-mingw32-gcc
-#OUTEXT=.exe
+# CC=x86_64-w64-mingw32-gcc
+# OUTEXT=.exe
 CFLAGS=-O2 -Wall -Wextra -std=c99 -I..
+# CFLAGS+=-m32
+# CFLAGS+=-DMCO_USE_UCONTEXT
 
 all: test_minicoro example simple
 
