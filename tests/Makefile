@@ -1,6 +1,6 @@
 CC=gcc
 OUTEXT=
-CFLAGS=-Og -Wall -Wextra -g -std=c99 -I..
+CFLAGS=-Og -Wall -Wextra -g -std=c89 -I..
 RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
 CFLAGS+=-m32
 # CFLAGS+=-DMCO_USE_UCONTEXT
@@ -28,10 +28,10 @@ example: example.c ../minicoro.h Makefile
 	$(CC) $(CFLAGS) example.c -o example
 
 simple: simple.c ../minicoro.h Makefile
-	$(CC) $(CFLAGS) simple.c -o simple
+	$(CC) $(CFLAGS) -std=c99 simple.c -o simple
 
 benchmark: benchmark.c ../minicoro.h Makefile
-	$(CC) $(CFLAGS) $(RELEASE_CFLAGS) benchmark.c -o benchmark
+	$(CC) $(CFLAGS) $(RELEASE_CFLAGS) -std=c99 benchmark.c -o benchmark
 
 clean:
 	rm -f testsuite$(OUTEXT) example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT)

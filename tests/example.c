@@ -18,7 +18,7 @@ static void fibonacci_coro(mco_coro* co) {
     fail("Failed to retrieve coroutine io data", res);
 
   while(1) {
-    /* Yield the next fibonacci number. */
+    /* Yield the next Fibonacci number. */
     mco_set_io_data(co, &m, sizeof(m));
     res = mco_yield(co);
     if(res != MCO_SUCCESS)

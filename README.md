@@ -15,7 +15,7 @@ The library assembly implementation is inspired by [Lua Coco](https://coco.luaji
 - Supports custom allocators.
 - Allow passing values between yield and resume.
 - Customizable stack size.
-- Coroutine API design inspired by Lua with use C in mind.
+- Coroutine API design inspired by Lua with C use in mind.
 - Yield across any C function.
 - Made to work in multithread applications.
 - Cross platform.
@@ -70,11 +70,11 @@ void coro_entry(mco_coro* co) {
 }
 
 int main() {
-  // First initialize a `mco_desc` object through `mco_desc_init`.
+  // First initialize a `desc` object through `mco_desc_init`.
   mco_desc desc = mco_desc_init(coro_entry, 0);
-  // Configure desc fields when needed (e.g. customize user_data, stack_size or allocation functions).
+  // Configure `desc` fields when needed (e.g. customize user_data, stack_size or allocation functions).
   desc.stack_size = 32768;
-  // Call `mco_create` with the output coroutine pointer and desc pointer.
+  // Call `mco_create` with the output coroutine pointer and `desc` pointer.
   mco_coro* co;
   mco_result res = mco_create(&co, &desc);
   assert(res == MCO_SUCCESS);
@@ -140,7 +140,7 @@ The following can be defined to change the library behavior:
 
 # Benchmarks
 
-The coroutine library was benchmark for x86_64 counting CPU cycles
+The coroutine library was benchmarked for x86_64 counting CPU cycles
 for context switch (triggered in resume or yield) and initialization.
 
 | Backend           | Context switch | Initialize   | Uninitialize |
@@ -182,7 +182,7 @@ const char* mco_result_description(mco_result res); /* Get the description of a 
 
 # Complete Example
 
-The following is a more complete example, generating fibonacci numbers:
+The following is a more complete example, generating Fibonacci numbers:
 
 ```c
 #define MINICORO_IMPL
@@ -205,7 +205,7 @@ static void fibonacci_coro(mco_coro* co) {
     fail("Failed to retrieve coroutine io data", res);
 
   while(1) {
-    /* Yield the next fibonacci number. */
+    /* Yield the next Fibonacci number. */
     mco_set_io_data(co, &m, sizeof(m));
     res = mco_yield(co);
     if(res != MCO_SUCCESS)
