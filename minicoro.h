@@ -226,12 +226,12 @@ MCO_API void* mco_get_user_data(mco_coro* co);                        /* Get cor
 /* IO data interface functions. The IO data interface is used to pass values between yield and resume. */
 MCO_API mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len);          /* Set the coroutine IO data. Use to send values between yield and resume. */
 MCO_API mco_result mco_get_io_data(mco_coro* co, void* dest, size_t maxlen);            /* Get the coroutine IO data. Use to receive values between yield and resume. */
-MCO_API size_t mco_get_io_data_size();                                                  /* Get the coroutine IO data size. */
+MCO_API size_t mco_get_io_data_size(mco_coro* co);                                              /* Get the coroutine IO data size. */
 MCO_API mco_result mco_reset_io_data(mco_coro* co);                                     /* Clear the coroutine IO data. Call this to reset IO data before a yield or resume. */
 MCO_API mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen);  /* Shortcut for `mco_get_io_data` + `mco_reset_io_data`. */
 
 /* Misc functions. */
-MCO_API mco_coro* mco_running();                            /* Returns the running coroutine for the current thread. */
+MCO_API mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
 MCO_API const char* mco_result_description(mco_result res); /* Get the description of a result. */
 
 #endif /* MINICORO_H */
@@ -405,7 +405,7 @@ typedef struct _mco_ctxbuf {
   void* buf[8]; /* rip, rsp, rbp, rbx, r12, r13, r14, r15 */
 } _mco_ctxbuf;
 
-static void _mco_wrap_main() {
+static void _mco_wrap_main(void) {
   __asm__ __volatile__ ("\tmovq %r13, %rdi\n\tjmpq *%r12\n");
 }
 
@@ -474,7 +474,7 @@ typedef struct _mco_ctxbuf {
   void* buf[22]; /* x19-x30, sp, lr, d8-d15 */
 } _mco_ctxbuf;
 
-void _mco_wrap_main();
+void _mco_wrap_main(void);
 int _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to);
 
 __asm__(
@@ -963,7 +963,7 @@ mco_result mco_get_and_reset_io_data(mco_coro* co, void* dest, size_t maxlen) {
   return mco_reset_io_data(co);
 }
 
-mco_coro* mco_running() {
+mco_coro* mco_running(void) {
   return mco_current_co;
 }
 
