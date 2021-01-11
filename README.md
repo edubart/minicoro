@@ -6,6 +6,8 @@ The API is inspired by [Lua coroutines](https://www.lua.org/manual/5.4/manual.ht
 The project is being developed mainly to be a coroutine backend
 for the [Nelua](https://github.com/edubart/nelua-lang) programming language.
 
+The library assembly implementation is inspired by [Lua Coco](https://coco.luajit.org/index.html) by Mike Pall.
+
 # Features
 
 - Stackful asymmetric coroutines.
