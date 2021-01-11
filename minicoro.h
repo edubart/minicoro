@@ -197,6 +197,8 @@ struct mco_coro {
   void* user_data;
   void* allocator_data;
   void (*free_cb)(void* ptr, void* allocator_data);
+  void* stack_base;
+  uintptr_t stack_size;
   size_t io_data_size;
   uint8_t io_data[MCO_IO_DATA_SIZE];
 };
@@ -422,8 +424,8 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
     : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
 }
 
-static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, uintptr_t stack_size) {
-  void** stack_high_ptr = (void**)((uintptr_t)stack_ptr + stack_size - sizeof(uintptr_t));
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, uintptr_t stack_size) {
+  void** stack_high_ptr = (void**)((uintptr_t)stack_base + stack_size - sizeof(uintptr_t));
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
   ctx->buf[0] = (void*)(_mco_wrap_main);
   ctx->buf[1] = (void*)(stack_high_ptr);
@@ -459,8 +461,8 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
 }
 #endif /* __PIC__ */
 
-static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, uintptr_t stack_size) {
-  void** stack_high_ptr = (void**)((uintptr_t)stack_ptr + stack_size - 2*sizeof(uintptr_t));
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, uintptr_t stack_size) {
+  void** stack_high_ptr = (void**)((uintptr_t)stack_base + stack_size - 2*sizeof(uintptr_t));
   stack_high_ptr[0] = (void*)(0xdeaddead);  /* Dummy return address. */
   stack_high_ptr[1] = (void*)(co);
   ctx->buf[0] = (void*)(_mco_main);
@@ -524,8 +526,8 @@ __asm__(
   ".size _mco_wrap_main, .-_mco_wrap_main\n"
 );
 
-static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, uintptr_t stack_size) {
-  void** stack_high_ptr = (void**)((uintptr_t)stack_ptr + stack_size);
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, uintptr_t stack_size) {
+  void** stack_high_ptr = (void**)((uintptr_t)stack_base + stack_size);
   ctx->buf[0] = (void*)(co);
   ctx->buf[1] = (void*)(_mco_main);
   ctx->buf[2] = (void*)(0xdeaddeaddeaddead); /* Dummy return address. */
@@ -564,14 +566,14 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   MCO_ASSERT(res == 0);
 }
 
-static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_ptr, uintptr_t stack_size) {
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, uintptr_t stack_size) {
   /* Initialize ucontext. */
   if(getcontext(ctx) != 0) {
     MCO_LOG("failed to get ucontext");
     return MCO_MAKE_CONTEXT_ERROR;
   }
   ctx->uc_link = NULL;  /* We never exit from _mco_wrap_main. */
-  ctx->uc_stack.ss_sp = stack_ptr;
+  ctx->uc_stack.ss_sp = stack_base;
   ctx->uc_stack.ss_size = stack_size;
   uint32_t lo = (uint32_t)((uintptr_t)co);
 #if defined(_LP64) || defined(__LP64__)
@@ -618,13 +620,13 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   _mco_context* context = (_mco_context*)context_addr;
   memset(context, 0, sizeof(_mco_context));
   /* Initialize stack. */
-  void *stack_ptr = (void*)stack_addr;
+  void *stack_base = (void*)stack_addr;
   uintptr_t stack_size = co_addr + desc->coro_size - stack_addr;
 #ifdef MCO_ZERO_MEMORY
-  memset(stack_ptr, 0, stack_size);
+  memset(stack_base, 0, stack_size);
 #endif
   /* Make the context. */
-  mco_result res = _mco_makectx(co, &context->ctx, stack_ptr, stack_size);
+  mco_result res = _mco_makectx(co, &context->ctx, stack_base, stack_size);
   if(res != MCO_SUCCESS) {
     return res;
   }
@@ -632,6 +634,8 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   context->valgrind_stack_id = VALGRIND_STACK_REGISTER(stack_addr, stack_addr + stack_size);
 #endif
   co->context = context;
+  co->stack_base = stack_base;
+  co->stack_size = stack_size;
   return MCO_SUCCESS;
 }
 
@@ -694,19 +698,34 @@ static void _mco_jumpout(mco_coro* co) {
   SwitchToFiber(back_fib);
 }
 
+/* Reverse engineered Fiber struct, used to get stack base. */
+typedef struct _mco_fiber {
+  LPVOID param;                /* fiber param */
+  void* except;                /* saved exception handlers list */
+  void* stack_base;            /* top of fiber stack */
+  void* stack_limit;           /* fiber stack low-water mark */
+  void* stack_allocation;      /* base of the fiber stack allocation */
+  CONTEXT context;             /* fiber context */
+  DWORD flags;                 /* fiber flags */
+  LPFIBER_START_ROUTINE start; /* start routine */
+  void **fls_slots;            /* fiber storage slots */
+} _mco_fiber;
+
 static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context address. */
   uintptr_t co_addr = (uintptr_t)co;
   uintptr_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
   _mco_fcontext* context = (_mco_fcontext*)context_addr;
   /* Create the fiber. */
-  void* fib = CreateFiber(desc->stack_size, (LPFIBER_START_ROUTINE)_mco_wrap_main, co);
+  _mco_fiber* fib = (_mco_fiber*)CreateFiberEx(desc->stack_size, desc->stack_size, FIBER_FLAG_FLOAT_SWITCH, (LPFIBER_START_ROUTINE)_mco_wrap_main, co);
   if(!fib) {
     MCO_LOG("failed to create fiber");
     return MCO_MAKE_CONTEXT_ERROR;
   }
   context->fib = fib;
   co->context = context;
+  co->stack_base = fib->stack_base;
+  co->stack_size = desc->stack_size;
   return MCO_SUCCESS;
 }
 
