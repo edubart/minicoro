@@ -1,7 +1,8 @@
 CC=gcc
 OUTEXT=
 CFLAGS=-Og -Wall -Wextra -g -std=c99 -I..
-# CFLAGS+=-m32
+RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
+CFLAGS+=-m32
 # CFLAGS+=-DMCO_USE_UCONTEXT
 CFLAGS+=-DMCO_USE_VALGRIND
 RUNNER=valgrind
@@ -10,15 +11,18 @@ RUNNER=valgrind
 # OUTEXT=.exe
 # RUNNER=
 
-all: test_minicoro example simple
+all: testsuite example simple benchmark
 
-test: test_minicoro example simple
-	$(RUNNER) ./test_minicoro$(OUTEXT)
+test: testsuite example simple
+	$(RUNNER) ./testsuite$(OUTEXT)
 	$(RUNNER) ./example$(OUTEXT)
 	$(RUNNER) ./simple$(OUTEXT)
 
-test_minicoro: test_minicoro.c ../minicoro.h Makefile
-	$(CC) $(CFLAGS) test_minicoro.c -o test_minicoro
+bench: benchmark
+	./benchmark$(OUTEXT)
+
+testsuite: testsuite.c ../minicoro.h Makefile
+	$(CC) $(CFLAGS) testsuite.c -o testsuite
 
 example: example.c ../minicoro.h Makefile
 	$(CC) $(CFLAGS) example.c -o example
@@ -26,5 +30,8 @@ example: example.c ../minicoro.h Makefile
 simple: simple.c ../minicoro.h Makefile
 	$(CC) $(CFLAGS) simple.c -o simple
 
+benchmark: benchmark.c ../minicoro.h Makefile
+	$(CC) $(CFLAGS) $(RELEASE_CFLAGS) benchmark.c -o benchmark
+
 clean:
-	rm -f test_minicoro$(OUTEXT) example$(OUTEXT) simple$(OUTEXT)
+	rm -f testsuite$(OUTEXT) example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT)

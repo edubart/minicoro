@@ -22,7 +22,7 @@ The API is inspired by Lua coroutines but with C use in mind.
 - Readable sources and documented.
 - Implemented via assembly, ucontext or fibers.
 - Lightweight and efficient.
-- Works in any C89 compiler.
+- Works in most C89 compilers.
 - Error prone API, returning proper error codes on misuse.
 - Support running with valgrind.
 
@@ -39,6 +39,7 @@ On Windows the context switching is implemented via the Fibers API.
 - To properly use in multithread applications, you must compile with C compiler that supports `thread_local` storage.
 - Address sanitizers for C may trigger false warnings when using coroutines.
 - The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
+- Take care to not cause stack overflows, otherwise your program may crash or not, the behavior is undefined.
 
 # Usage
 
