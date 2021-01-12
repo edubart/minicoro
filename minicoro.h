@@ -677,7 +677,7 @@ static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
 #ifdef MCO_USE_FIBERS
 
 #ifndef _WIN32_WINNT
-#include <sdkddkver.h> /* for _WIN32_WINNT */
+#define _WIN32_WINNT 0x0400
 #endif
 #include <windows.h>
 
