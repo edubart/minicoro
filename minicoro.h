@@ -395,7 +395,7 @@ typedef struct _mco_ctxbuf {
 static void _mco_wrap_main(void) {
   __asm__ __volatile__ (
     "movq %r13, %rdi\n\t"
-    "jmpq *%r12\n");
+    "jmpq *%r12");
 }
 
 static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
@@ -676,7 +676,9 @@ static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
 
 #ifdef MCO_USE_FIBERS
 
+#ifndef _WIN32_WINNT
 #include <sdkddkver.h> /* for _WIN32_WINNT */
+#endif
 #include <windows.h>
 
 typedef struct _mco_fcontext {
@@ -697,7 +699,7 @@ static void _mco_jumpin(mco_coro* co) {
   SwitchToFiber(context->fib);
 }
 
-static CALLBACK void _mco_wrap_main(mco_coro* co) {
+static void CALLBACK _mco_wrap_main(mco_coro* co) {
   _mco_main(co);
 }
 
