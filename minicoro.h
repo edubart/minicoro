@@ -189,14 +189,12 @@ typedef enum mco_result {
   MCO_INVALID_OPERATION,
 } mco_result;
 
-typedef struct mco_coro mco_coro;
-typedef void (*mco_func)(mco_coro* co);
-
 /* Coroutine structure. */
+typedef struct mco_coro mco_coro;
 struct mco_coro {
   void* context;
   mco_state state;
-  mco_func func;
+  void (*func)(mco_coro* co);
   mco_coro* prev_co;
   void* user_data;
   void* allocator_data;
@@ -209,26 +207,27 @@ struct mco_coro {
 
 /* Structure used to initialize a coroutine. */
 typedef struct mco_desc {
-  mco_func func;        /* Entry point function for the coroutine. */
-  size_t coro_size;     /* Coroutine size, must be initialized through mco_init_desc. */
-  size_t stack_size;    /* Coroutine stack size, must be initialized through `mco_init_desc`. */
-  void* user_data;      /* Coroutine user data, can be get with `mco_get_user_data`. */
+  void (*func)(mco_coro* co); /* Entry point function for the coroutine. */
+  void* user_data;            /* Coroutine user data, can be get with `mco_get_user_data`. */
   /* Custom allocation interface. */
   void* (*malloc_cb)(size_t size, void* allocator_data); /* Custom allocation function. */
   void  (*free_cb)(void* ptr, void* allocator_data);     /* Custom deallocation function. */
-  void* allocator_data; /* User data pointer passed to `malloc`/`free` allocation functions. */
+  void* allocator_data;       /* User data pointer passed to `malloc`/`free` allocation functions. */
+  /* These must be initialized only through `mco_init_desc`. */
+  size_t coro_size;           /* Coroutine structure size. */
+  size_t stack_size;          /* Coroutine stack size. */
 } mco_desc;
 
 /* Coroutine functions. */
-MCO_API mco_desc mco_desc_init(mco_func func, size_t stack_size);     /* Initialize description of a coroutine. */
-MCO_API mco_result mco_init(mco_coro* co, mco_desc* desc);            /* Initialize the coroutine. */
-MCO_API mco_result mco_uninit(mco_coro* co);                          /* Uninitialize the coroutine, may fail if it's not dead or suspended. */
-MCO_API mco_result mco_create(mco_coro** out_co, mco_desc* desc);     /* Allocates and initializes a new coroutine. */
-MCO_API mco_result mco_destroy(mco_coro* co);                         /* Uninitialize and deallocate the coroutine, may fail if it's not dead or suspended. */
-MCO_API mco_result mco_resume(mco_coro* co);                          /* Starts or continues the execution of the coroutine. */
-MCO_API mco_result mco_yield(mco_coro* co);                           /* Suspends the execution of a coroutine. */
-MCO_API mco_state mco_status(mco_coro* co);                           /* Returns the status of the coroutine. */
-MCO_API void* mco_get_user_data(mco_coro* co);                        /* Get coroutine user data supplied on coroutine creation. */
+MCO_API mco_desc mco_desc_init(void (*func)(mco_coro* co), size_t stack_size);  /* Initialize description of a coroutine. */
+MCO_API mco_result mco_init(mco_coro* co, mco_desc* desc);                      /* Initialize the coroutine. */
+MCO_API mco_result mco_uninit(mco_coro* co);                                    /* Uninitialize the coroutine, may fail if it's not dead or suspended. */
+MCO_API mco_result mco_create(mco_coro** out_co, mco_desc* desc);               /* Allocates and initializes a new coroutine. */
+MCO_API mco_result mco_destroy(mco_coro* co);                                   /* Uninitialize and deallocate the coroutine, may fail if it's not dead or suspended. */
+MCO_API mco_result mco_resume(mco_coro* co);                                    /* Starts or continues the execution of the coroutine. */
+MCO_API mco_result mco_yield(mco_coro* co);                                     /* Suspends the execution of a coroutine. */
+MCO_API mco_state mco_status(mco_coro* co);                                     /* Returns the status of the coroutine. */
+MCO_API void* mco_get_user_data(mco_coro* co);                                  /* Get coroutine user data supplied on coroutine creation. */
 
 /* Storage interface functions, used to pass values between yield and resume. */
 MCO_API mco_result mco_set_storage(mco_coro* co, const void* src, size_t len);  /* Set the coroutine storage. Use to send values between yield and resume. */
@@ -760,7 +759,7 @@ static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
 
 /* ---------------------------------------------------------------------------------------------- */
 
-mco_desc mco_desc_init(mco_func func, size_t stack_size) {
+mco_desc mco_desc_init(void (*func)(mco_coro* co), size_t stack_size) {
   if(stack_size != 0) {
     /* Stack size should be at least `MCO_MIN_STACK_SIZE`. */
     if(stack_size < MCO_MIN_STACK_SIZE) {
