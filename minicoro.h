@@ -384,34 +384,6 @@ static void _mco_main(mco_coro* co) {
 
 #if defined(MCO_USE_UCONTEXT) || defined(MCO_USE_ASM)
 
-/*
-The following assembly instructions is taken from LuaCoco by Mike Pall.
-See https://coco.luajit.org/index.html
-
-MIT license
-
-Copyright (C) 2004-2016 Mike Pall. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
-
 #ifdef MCO_USE_ASM
 
 #if defined(__x86_64__)
@@ -421,24 +393,39 @@ typedef struct _mco_ctxbuf {
 } _mco_ctxbuf;
 
 static void _mco_wrap_main(void) {
-  __asm__ __volatile__ ("\tmovq %r13, %rdi\n\tjmpq *%r12\n");
+  __asm__ __volatile__ (
+    "movq %r13, %rdi\n\t"
+    "jmpq *%r12\n");
 }
 
 static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   __asm__ __volatile__ (
     "leaq 1f(%%rip), %%rax\n\t"
-    "movq %%rax, (%0)\n\t" "movq %%rsp, 8(%0)\n\t" "movq %%rbp, 16(%0)\n\t"
-    "movq %%rbx, 24(%0)\n\t" "movq %%r12, 32(%0)\n\t" "movq %%r13, 40(%0)\n\t"
-    "movq %%r14, 48(%0)\n\t" "movq %%r15, 56(%0)\n\t"
-    "movq 56(%1), %%r15\n\t" "movq 48(%1), %%r14\n\t" "movq 40(%1), %%r13\n\t"
-    "movq 32(%1), %%r12\n\t" "movq 24(%1), %%rbx\n\t" "movq 16(%1), %%rbp\n\t"
-    "movq 8(%1), %%rsp\n\t" "jmpq *(%1)\n" "1:\n"
+    "movq %%rax, (%0)\n\t"
+    "movq %%rsp, 8(%0)\n\t"
+    "movq %%rbp, 16(%0)\n\t"
+    "movq %%rbx, 24(%0)\n\t"
+    "movq %%r12, 32(%0)\n\t"
+    "movq %%r13, 40(%0)\n\t"
+    "movq %%r14, 48(%0)\n\t"
+    "movq %%r15, 56(%0)\n\t"
+    "movq 56(%1), %%r15\n\t"
+    "movq 48(%1), %%r14\n\t"
+    "movq 40(%1), %%r13\n\t"
+    "movq 32(%1), %%r12\n\t"
+    "movq 24(%1), %%rbx\n\t"
+    "movq 16(%1), %%rbp\n\t"
+    "movq 8(%1), %%rsp\n\t"
+    "jmpq *(%1)\n"
+    "1:\n"
     : "+S" (from), "+D" (to) :
     : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
 }
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, uintptr_t stack_size) {
-  void** stack_high_ptr = (void**)((uintptr_t)stack_base + stack_size - sizeof(uintptr_t));
+  /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */
+  /* Reserve 16 bytes for aligned return address space. */
+  void** stack_high_ptr = (void**)((uintptr_t)stack_base + stack_size - 128 - 16);
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
   ctx->buf[0] = (void*)(_mco_wrap_main);
   ctx->buf[1] = (void*)(stack_high_ptr);
@@ -455,11 +442,18 @@ typedef struct _mco_ctxbuf {
 } _mco_ctxbuf;
 static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   __asm__ __volatile__ (
-    "call 1f\n" "1:\tpopl %%eax\n\t" "addl $(2f-1b),%%eax\n\t"
-    "movl %%eax, (%0)\n\t" "movl %%esp, 4(%0)\n\t"
-    "movl %%ebp, 8(%0)\n\t" "movl %%ebx, 12(%0)\n\t"
-    "movl 12(%1), %%ebx\n\t" "movl 8(%1), %%ebp\n\t"
-    "movl 4(%1), %%esp\n\t" "jmp *(%1)\n" "2:\n"
+    "call 1f\n"
+    "1:\tpopl %%eax\n\t"
+    "addl $(2f-1b),%%eax\n\t"
+    "movl %%eax, (%0)\n\t"
+    "movl %%esp, 4(%0)\n\t"
+    "movl %%ebp, 8(%0)\n\t"
+    "movl %%ebx, 12(%0)\n\t"
+    "movl 12(%1), %%ebx\n\t"
+    "movl 8(%1), %%ebp\n\t"
+    "movl 4(%1), %%esp\n\t"
+    "jmp *(%1)\n"
+    "2:\n"
     : "+S" (from), "+D" (to) : : "eax", "ecx", "edx", "memory", "cc");
 }
 #else
@@ -468,8 +462,13 @@ typedef struct _mco_ctxbuf {
 } _mco_ctxbuf;
 static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   __asm__ __volatile__ (
-    "movl $1f, (%0)\n\t" "movl %%esp, 4(%0)\n\t" "movl %%ebp, 8(%0)\n\t"
-    "movl 8(%1), %%ebp\n\t" "movl 4(%1), %%esp\n\t" "jmp *(%1)\n" "1:\n"
+    "movl $1f, (%0)\n\t"
+    "movl %%esp, 4(%0)\n\t"
+    "movl %%ebp, 8(%0)\n\t"
+    "movl 8(%1), %%ebp\n\t"
+    "movl 4(%1), %%esp\n\t"
+    "jmp *(%1)\n"
+    "1:\n"
     : "+S" (from), "+D" (to) : : "eax", "ebx", "ecx", "edx", "memory", "cc");
 }
 #endif /* __PIC__ */
