@@ -934,11 +934,11 @@ mco_result mco_set_storage(mco_coro* co, const void* src, size_t len) {
     return MCO_INVALID_COROUTINE;
   } else if(len > 0) {
     if(len > MCO_STORAGE_SIZE) {
-      MCO_LOG("attempt to set io data from a buffer that is too large");
+      MCO_LOG("attempt to set storage from a buffer that is too large");
       return MCO_NOT_ENOUGH_SPACE;
     }
     if(!src) {
-      MCO_LOG("attempt to set io data from an invalid pointer");
+      MCO_LOG("attempt to set storage from an invalid pointer");
       return MCO_INVALID_POINTER;
     }
     memcpy(&co->storage[0], src, len);
