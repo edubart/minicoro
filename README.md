@@ -157,8 +157,20 @@ _NOTE_: Tested on Intel(R) Core(TM) i7-3770K CPU @ 3.50GHz with pre allocated co
 Here is a list of all library functions for quick reference:
 
 ```c
+/* Structure used to initialize a coroutine. */
+typedef struct mco_desc {
+  mco_func func;        /* Entry point function for the coroutine. */
+  size_t coro_size;     /* Coroutine size, must be initialized through mco_init_desc. */
+  size_t stack_size;    /* Coroutine stack size, must be initialized through `mco_init_desc`. */
+  void* user_data;      /* Coroutine user data, can be get with `mco_get_user_data`. */
+  /* Custom allocation interface. */
+  void* (*malloc_cb)(size_t size, void* allocator_data); /* Custom allocation function. */
+  void  (*free_cb)(void* ptr, void* allocator_data);     /* Custom deallocation function. */
+  void* allocator_data; /* User data pointer passed to `malloc`/`free` allocation functions. */
+} mco_desc;
+
 /* Coroutine functions. */
-mco_desc mco_desc_init(mco_func func, uintptr_t stack_size);  /* Initialize description of a coroutine. */
+mco_desc mco_desc_init(mco_func func, size_t stack_size);     /* Initialize description of a coroutine. */
 mco_result mco_init(mco_coro* co, mco_desc* desc);            /* Initialize the coroutine. */
 mco_result mco_uninit(mco_coro* co);                          /* Uninitialize the coroutine, may fail if it's not dead or suspended. */
 mco_result mco_create(mco_coro** out_co, mco_desc* desc);     /* Allocates and initializes a new coroutine. */

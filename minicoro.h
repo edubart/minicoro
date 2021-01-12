@@ -162,7 +162,6 @@ extern "C" {
 #endif
 
 #include <stddef.h> /* for size_t */
-#include <stdint.h> /* for uintptr_t, uint32_t, etc.. */
 
 /* ---------------------------------------------------------------------------------------------- */
 
@@ -203,16 +202,16 @@ struct mco_coro {
   void* allocator_data;
   void (*free_cb)(void* ptr, void* allocator_data);
   void* stack_base; /* Stack base address, can be used to scan memory in a garbage collector. */
-  uintptr_t stack_size;
+  size_t stack_size;
   size_t storage_size;
-  uint8_t storage[MCO_STORAGE_SIZE];
+  unsigned char storage[MCO_STORAGE_SIZE];
 };
 
 /* Structure used to initialize a coroutine. */
 typedef struct mco_desc {
   mco_func func;        /* Entry point function for the coroutine. */
-  uintptr_t coro_size;  /* Coroutine size, must be initialized through mco_init_desc. */
-  uintptr_t stack_size; /* Coroutine stack size, must be initialized through `mco_init_desc`. */
+  size_t coro_size;     /* Coroutine size, must be initialized through mco_init_desc. */
+  size_t stack_size;    /* Coroutine stack size, must be initialized through `mco_init_desc`. */
   void* user_data;      /* Coroutine user data, can be get with `mco_get_user_data`. */
   /* Custom allocation interface. */
   void* (*malloc_cb)(size_t size, void* allocator_data); /* Custom allocation function. */
@@ -221,7 +220,7 @@ typedef struct mco_desc {
 } mco_desc;
 
 /* Coroutine functions. */
-MCO_API mco_desc mco_desc_init(mco_func func, uintptr_t stack_size);  /* Initialize description of a coroutine. */
+MCO_API mco_desc mco_desc_init(mco_func func, size_t stack_size);     /* Initialize description of a coroutine. */
 MCO_API mco_result mco_init(mco_coro* co, mco_desc* desc);            /* Initialize the coroutine. */
 MCO_API mco_result mco_uninit(mco_coro* co);                          /* Uninitialize the coroutine, may fail if it's not dead or suspended. */
 MCO_API mco_result mco_create(mco_coro** out_co, mco_desc* desc);     /* Allocates and initializes a new coroutine. */
@@ -342,7 +341,7 @@ static void mco_free(void* ptr, void* allocator_data) {
 #include <string.h> /* For memcpy and memset. */
 
 /* Utility for aligning addresses. */
-static uintptr_t _mco_align_forward(uintptr_t addr, uintptr_t align) {
+static size_t _mco_align_forward(size_t addr, size_t align) {
   return (addr + (align-1)) & ~(align-1);
 }
 
@@ -423,10 +422,10 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
     : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
 }
 
-static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, uintptr_t stack_size) {
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
   /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */
   /* Reserve 16 bytes for aligned return address space. */
-  void** stack_high_ptr = (void**)((uintptr_t)stack_base + stack_size - 128 - 16);
+  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - 128 - 16);
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
   ctx->buf[0] = (void*)(_mco_wrap_main);
   ctx->buf[1] = (void*)(stack_high_ptr);
@@ -474,8 +473,8 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
 }
 #endif /* __PIC__ */
 
-static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, uintptr_t stack_size) {
-  void** stack_high_ptr = (void**)((uintptr_t)stack_base + stack_size - 2*sizeof(uintptr_t));
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
+  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - 2*sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddead);  /* Dummy return address. */
   stack_high_ptr[1] = (void*)(co);
   ctx->buf[0] = (void*)(_mco_main);
@@ -539,12 +538,12 @@ __asm__(
   ".size _mco_wrap_main, .-_mco_wrap_main\n"
 );
 
-static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, uintptr_t stack_size) {
-  void** stack_high_ptr = (void**)((uintptr_t)stack_base + stack_size);
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
+  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size);
   ctx->buf[0] = (void*)(co);
   ctx->buf[1] = (void*)(_mco_main);
   ctx->buf[2] = (void*)(0xdeaddeaddeaddead); /* Dummy return address. */
-  ctx->buf[12] = (void*)((uintptr_t)(stack_high_ptr) & ~15);
+  ctx->buf[12] = (void*)((size_t)(stack_high_ptr) & ~15);
   ctx->buf[13] = (void*)(_mco_wrap_main);
   return MCO_SUCCESS;
 }
@@ -562,13 +561,13 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
 typedef ucontext_t _mco_ctxbuf;
 
 #if defined(_LP64) || defined(__LP64__)
-static void _mco_wrap_main(uint32_t lo, uint32_t hi) {
-  mco_coro* co = (mco_coro*)(((uintptr_t)lo) | (((uintptr_t)hi) << 32)); /* Extract coroutine pointer. */
+static void _mco_wrap_main(unsigned int lo, unsigned int hi) {
+  mco_coro* co = (mco_coro*)(((size_t)lo) | (((size_t)hi) << 32)); /* Extract coroutine pointer. */
   _mco_main(co);
 }
 #else
-static void _mco_wrap_main(uint32_t lo) {
-  mco_coro* co = (mco_coro*)((uintptr_t)lo); /* Extract coroutine pointer. */
+static void _mco_wrap_main(unsigned int lo) {
+  mco_coro* co = (mco_coro*)((size_t)lo); /* Extract coroutine pointer. */
   _mco_main(co);
 }
 #endif
@@ -579,7 +578,7 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   MCO_ASSERT(res == 0);
 }
 
-static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, uintptr_t stack_size) {
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
   /* Initialize ucontext. */
   if(getcontext(ctx) != 0) {
     MCO_LOG("failed to get ucontext");
@@ -588,9 +587,9 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
   ctx->uc_link = NULL;  /* We never exit from _mco_wrap_main. */
   ctx->uc_stack.ss_sp = stack_base;
   ctx->uc_stack.ss_size = stack_size;
-  uint32_t lo = (uint32_t)((uintptr_t)co);
+  unsigned int lo = (unsigned int)((size_t)co);
 #if defined(_LP64) || defined(__LP64__)
-  uint32_t hi = (uint32_t)(((uintptr_t)co)>>32);
+  unsigned int hi = (unsigned int)(((size_t)co)>>32);
   makecontext(ctx, (void (*)(void))_mco_wrap_main, 2, lo, hi);
 #else
   makecontext(ctx, (void (*)(void))_mco_wrap_main, 1, lo);
@@ -626,15 +625,15 @@ static void _mco_jumpout(mco_coro* co) {
 
 static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context and stack address. */
-  uintptr_t co_addr = (uintptr_t)co;
-  uintptr_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
-  uintptr_t stack_addr = _mco_align_forward(context_addr + sizeof(_mco_context), 16);
+  size_t co_addr = (size_t)co;
+  size_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
+  size_t stack_addr = _mco_align_forward(context_addr + sizeof(_mco_context), 16);
   /* Initialize context. */
   _mco_context* context = (_mco_context*)context_addr;
   memset(context, 0, sizeof(_mco_context));
   /* Initialize stack. */
   void *stack_base = (void*)stack_addr;
-  uintptr_t stack_size = co_addr + desc->coro_size - stack_addr;
+  size_t stack_size = co_addr + desc->coro_size - stack_addr;
 #ifdef MCO_ZERO_MEMORY
   memset(stack_base, 0, stack_size);
 #endif
@@ -664,9 +663,9 @@ static void _mco_destroy_context(mco_coro* co) {
 #endif
 }
 
-static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
-   /* Add enough space to hold mco_coro and _mco_context. */
-  int extra_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_context), 16);
+static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
+  /* Add enough space to hold mco_coro and _mco_context. */
+  size_t extra_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_context), 16);
   desc->coro_size = _mco_align_forward(stack_size + extra_size, 4096);
   desc->stack_size = stack_size; /* This is just a hint, it won't be the real one. */
 }
@@ -685,7 +684,7 @@ static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
 typedef struct _mco_fcontext {
   void* fib;
   void* back_fib;
-  uintptr_t stack_size;
+  size_t stack_size;
 } _mco_fcontext;
 
 static void _mco_jumpin(mco_coro* co) {
@@ -728,8 +727,8 @@ typedef struct _mco_fiber {
 
 static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context address. */
-  uintptr_t co_addr = (uintptr_t)co;
-  uintptr_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
+  size_t co_addr = (size_t)co;
+  size_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
   _mco_fcontext* context = (_mco_fcontext*)context_addr;
   /* Create the fiber. */
   _mco_fiber* fib = (_mco_fiber*)CreateFiberEx(desc->stack_size, desc->stack_size, FIBER_FLAG_FLOAT_SWITCH, (LPFIBER_START_ROUTINE)_mco_wrap_main, co);
@@ -752,7 +751,7 @@ static void _mco_destroy_context(mco_coro* co) {
   }
 }
 
-static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
+static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
   desc->coro_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_fcontext), 16);
   desc->stack_size = stack_size;
 }
@@ -761,7 +760,7 @@ static void _mco_init_desc_sizes(mco_desc* desc, uintptr_t stack_size) {
 
 /* ---------------------------------------------------------------------------------------------- */
 
-mco_desc mco_desc_init(mco_func func, uintptr_t stack_size) {
+mco_desc mco_desc_init(mco_func func, size_t stack_size) {
   if(stack_size != 0) {
     /* Stack size should be at least `MCO_MIN_STACK_SIZE`. */
     if(stack_size < MCO_MIN_STACK_SIZE) {
