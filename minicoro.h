@@ -932,23 +932,23 @@ mco_result mco_set_storage(mco_coro* co, const void* src, size_t len) {
   if(!co) {
     MCO_LOG("attempt to use an invalid coroutine");
     return MCO_INVALID_COROUTINE;
-  }
-  if(len > MCO_STORAGE_SIZE) {
-    MCO_LOG("attempt to set io data from a buffer that is too large");
-    return MCO_NOT_ENOUGH_SPACE;
   } else if(len > 0) {
+    if(len > MCO_STORAGE_SIZE) {
+      MCO_LOG("attempt to set io data from a buffer that is too large");
+      return MCO_NOT_ENOUGH_SPACE;
+    }
     if(!src) {
       MCO_LOG("attempt to set io data from an invalid pointer");
       return MCO_INVALID_POINTER;
     }
     memcpy(&co->storage[0], src, len);
-#ifdef MCO_ZERO_MEMORY
-    if(len < co->storage_size) {
-      /* Clear garbage in old storage. */
-      memset(&co->storage[len], 0, co->storage_size - len);
-    }
-#endif
   }
+#ifdef MCO_ZERO_MEMORY
+  if(co->storage_size > len) {
+    /* Clear garbage in old storage. */
+    memset(&co->storage[len], 0, co->storage_size - len);
+  }
+#endif
   co->storage_size = len;
   return MCO_SUCCESS;
 }
