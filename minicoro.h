@@ -12,7 +12,7 @@ The API is inspired by Lua coroutines but with C use in mind.
 - Stackful asymmetric coroutines.
 - Supports nesting coroutines (resuming a coroutine from another coroutine).
 - Supports custom allocators.
-- Allow passing values between yield and resume.
+- Storage system to allow passing values between yield and resume.
 - Customizable stack size.
 - Coroutine API design inspired by Lua with C use in mind.
 - Yield across any C function.
@@ -32,23 +32,24 @@ On Unix systems the context switching is implemented via assembly instructions f
 x86/x86_64 and aarch64 architectures otherwise fallbacks to ucontext implementation.
 On Windows the context switching is implemented via the Fibers API.
 
-# Limitations
+# Caveats
 
 - Don't use coroutines with C++ exceptions, this is not supported.
 - When using C++ RAII (i.e. destructors) you must resume the coroutine until it dies to properly execute all destructors.
-- To properly use in multithread applications, you must compile with C compiler that supports `thread_local` storage.
+- To use in multithread applications, you must compile with C compiler that supports `thread_local` qualifier.
 - Address sanitizers for C may trigger false warnings when using coroutines.
 - The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
 - Take care to not cause stack overflows, otherwise your program may crash or not, the behavior is undefined.
+- Some older operating systems may have defective ucontext implementations because this feature is not widely used, upgrade your OS.
 
 # Usage
 
 To use minicoro, do the following in one .c file:
 
-  ```c
-  #define MINICORO_IMPL
-  #include "minicoro.h"
-  ```
+```c
+#define MINICORO_IMPL
+#include "minicoro.h"
+```
 
 You can do `#include "minicoro.h"` in other parts of the program just like any other header.
 
@@ -108,10 +109,10 @@ to this just use `mco_yield(mco_running())`.
 
 ## Passing data between yield and resume
 
-The library has the IO data interface to assist passing data between yield and resume.
+The library has the storage interface to assist passing data between yield and resume.
 It's usage is straightforward,
-use `mco_set_io_data` to send data before a `mco_resume` or `mco_yield`,
-then later use `mco_get_io_data` after a `mco_resume` or `mco_yield` to receive data.
+use `mco_set_storage` to send data before a `mco_resume` or `mco_yield`,
+then later use `mco_get_storage` after a `mco_resume` or `mco_yield` to receive data.
 
 ## Error handling
 
@@ -123,7 +124,7 @@ the user is encouraged to handle them properly.
 The following can be defined to change the library behavior:
 
 - `MCO_API`                   - Public API qualifier. Default is `extern`.
-- `MCO_IO_DATA_SIZE`          - Size of IO data interface buffer. Default is 1024.
+- `MCO_STORAGE_SIZE`          - Size of coroutine storage buffer. Default is 1024.
 - `MCO_MIN_STACK_SIZE`        - Minimum stack size when creating a coroutine. Default is 32768.
 - `MCO_DEFAULT_STACK_SIZE`    - Default stack size when creating a coroutine. Default is 57344.
 - `MCO_MALLOC`                - Default allocation function. Default is `malloc`.
@@ -132,7 +133,7 @@ The following can be defined to change the library behavior:
 - `MCO_NO_DEBUG`              - Disable debug mode.
 - `MCO_NO_MULTITHREAD`        - Disable multithread usage. Multithread is supported when `thread_local` is supported.
 - `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
-- `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding IO data, intended for garbage collected environments.
+- `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding storage, intended for garbage collected environments.
 - `MCO_USE_ASM`               - Force use of assembly context switch implementation.
 - `MCO_USE_UCONTEXT`          - Force use ucontext of context switch implementation.
 - `MCO_USE_VALGRIND`          - Define if you want run with valgrind to fix accessing memory errors.
@@ -155,9 +156,9 @@ extern "C" {
 #define MCO_API extern
 #endif
 
-/* Size of IO data interface buffer. */
-#ifndef MCO_IO_DATA_SIZE
-#define MCO_IO_DATA_SIZE 1024
+/* Size of coroutine storage buffer. */
+#ifndef MCO_STORAGE_SIZE
+#define MCO_STORAGE_SIZE 1024
 #endif
 
 #include <stddef.h> /* for size_t */
@@ -201,10 +202,10 @@ struct mco_coro {
   void* user_data;
   void* allocator_data;
   void (*free_cb)(void* ptr, void* allocator_data);
-  void* stack_base;
+  void* stack_base; /* Stack base address, can be used to scan memory in a garbage collector. */
   uintptr_t stack_size;
-  size_t io_data_size;
-  uint8_t io_data[MCO_IO_DATA_SIZE];
+  size_t storage_size;
+  uint8_t storage[MCO_STORAGE_SIZE];
 };
 
 /* Structure used to initialize a coroutine. */
@@ -230,11 +231,11 @@ MCO_API mco_result mco_yield(mco_coro* co);                           /* Suspend
 MCO_API mco_state mco_status(mco_coro* co);                           /* Returns the status of the coroutine. */
 MCO_API void* mco_get_user_data(mco_coro* co);                        /* Get coroutine user data supplied on coroutine creation. */
 
-/* IO data interface functions. The IO data interface is used to pass values between yield and resume. */
-MCO_API mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len);  /* Set the coroutine IO data. Use to send values between yield and resume. */
-MCO_API mco_result mco_reset_io_data(mco_coro* co);                             /* Clear the coroutine IO data. Call this to reset IO data before a yield or resume. */
-MCO_API size_t mco_get_io_data(mco_coro* co, void* dest, size_t len);           /* Get the coroutine IO data. Use to receive values between yield and resume. */
-MCO_API size_t mco_get_io_data_size(mco_coro* co);                              /* Get the coroutine IO data size. */
+/* Storage interface functions, used to pass values between yield and resume. */
+MCO_API mco_result mco_set_storage(mco_coro* co, const void* src, size_t len);  /* Set the coroutine storage. Use to send values between yield and resume. */
+MCO_API mco_result mco_reset_storage(mco_coro* co);                             /* Clear the coroutine storage. Call this to reset storage before a yield or resume. */
+MCO_API size_t mco_get_storage(mco_coro* co, void* dest, size_t len);           /* Get the coroutine storage. Use to receive values between yield and resume. */
+MCO_API size_t mco_get_storage_size(mco_coro* co);                              /* Get the coroutine storage size. */
 
 /* Misc functions. */
 MCO_API mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
@@ -769,6 +770,7 @@ mco_desc mco_desc_init(mco_func func, uintptr_t stack_size) {
   } else {
     stack_size = MCO_DEFAULT_STACK_SIZE;
   }
+  stack_size = _mco_align_forward(stack_size, 16); /* Stack size should be aligned to 16 bytes. */
   mco_desc desc;
   memset(&desc, 0, sizeof(mco_desc));
 #ifndef MCO_NO_DEFAULT_ALLOCATORS
@@ -928,12 +930,12 @@ void* mco_get_user_data(mco_coro* co) {
   return NULL;
 }
 
-mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len) {
+mco_result mco_set_storage(mco_coro* co, const void* src, size_t len) {
   if(!co) {
     MCO_LOG("attempt to use an invalid coroutine");
     return MCO_INVALID_COROUTINE;
   }
-  if(len > MCO_IO_DATA_SIZE) {
+  if(len > MCO_STORAGE_SIZE) {
     MCO_LOG("attempt to set io data from a buffer that is too large");
     return MCO_NOT_ENOUGH_SPACE;
   } else if(len > 0) {
@@ -941,40 +943,40 @@ mco_result mco_set_io_data(mco_coro* co, const void* src, size_t len) {
       MCO_LOG("attempt to set io data from an invalid pointer");
       return MCO_INVALID_POINTER;
     }
-    memcpy(&co->io_data[0], src, len);
+    memcpy(&co->storage[0], src, len);
 #ifdef MCO_ZERO_MEMORY
-    if(len < co->io_data_size) {
-      /* Clear garbage in old IO data. */
-      memset(&co->io_data[len], 0, co->io_data_size - len);
+    if(len < co->storage_size) {
+      /* Clear garbage in old storage. */
+      memset(&co->storage[len], 0, co->storage_size - len);
     }
 #endif
   }
-  co->io_data_size = len;
+  co->storage_size = len;
   return MCO_SUCCESS;
 }
 
-size_t mco_get_io_data(mco_coro* co, void* dest, size_t len) {
+size_t mco_get_storage(mco_coro* co, void* dest, size_t len) {
   if(!co || !dest) {
     return 0;
   }
-  if(len > co->io_data_size) {
-    len = co->io_data_size;
+  if(len > co->storage_size) {
+    len = co->storage_size;
   }
   if(len > 0) {
-    memcpy(dest, &co->io_data[0], len);
+    memcpy(dest, &co->storage[0], len);
   }
   return len;
 }
 
-size_t mco_get_io_data_size(mco_coro* co) {
+size_t mco_get_storage_size(mco_coro* co) {
   if(co != NULL) {
-    return co->io_data_size;
+    return co->storage_size;
   }
   return 0;
 }
 
-mco_result mco_reset_io_data(mco_coro* co) {
-  return mco_set_io_data(co, NULL, 0);
+mco_result mco_reset_storage(mco_coro* co) {
+  return mco_set_storage(co, NULL, 0);
 }
 
 #ifdef MCO_NO_MULTITHREAD
