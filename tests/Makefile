@@ -1,11 +1,12 @@
 CC=gcc
 OUTEXT=
-CFLAGS=-Og -Wall -Wextra -g -std=c89 -I..
+CFLAGS=-Og -g -Wall -Wextra -std=c89 -I..
 RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
 # CFLAGS+=-m32
+# CFLAGS+=-DMCO_USE_ASM
 # CFLAGS+=-DMCO_USE_UCONTEXT
 # CFLAGS+=-fsanitize=address
-CFLAGS+=-DMCO_USE_VALGRIND
+# CFLAGS+=-DMCO_USE_VALGRIND
 # RUNNER=valgrind
 
 # CC=x86_64-w64-mingw32-gcc

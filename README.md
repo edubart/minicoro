@@ -39,10 +39,11 @@ Most platforms are supported through different methods.
 | ARM64        | (any OS)    | GCC asm   |
 | (any CPU)    | (any OS)    | ucontext  |
 | (any CPU)    | Windows     | fibers    |
+| x86_64       | Windows     | blob asm  |
 | WebAssembly  | Web         | fibers    |
 
 The ucontext method is used as a fallback if the compiler or CPU does not support GCC inline assembly.
-The fibers method is always used on Windows.
+The fibers method is the default on Windows, to use the assembly method you have to explicitly enable it.
 
 # Caveats
 

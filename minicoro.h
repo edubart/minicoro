@@ -38,10 +38,11 @@ Most platforms are supported through different methods.
 | ARM64        | (any OS)    | GCC asm   |
 | (any CPU)    | (any OS)    | ucontext  |
 | (any CPU)    | Windows     | fibers    |
+| x86_64       | Windows     | blob asm  |
 | WebAssembly  | Web         | fibers    |
 
 The ucontext method is used as a fallback if the compiler or CPU does not support GCC inline assembly.
-The fibers method is always used on Windows.
+The fibers method is the default on Windows, to use the assembly method you have to explicitly enable it.
 
 # Caveats
 
@@ -404,6 +405,76 @@ static void _mco_main(mco_coro* co) {
 
 #if defined(__x86_64__)
 
+#ifdef _WIN32
+
+typedef struct _mco_ctxbuf {
+  void* buf[10]; /* rip, rsp, rbp, rbx, r12, r13, r14, r15, rdi, rsi */
+  void* xmm[10*2]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
+} _mco_ctxbuf;
+
+#ifdef __GNUC__
+#define _MCO_ASM_BLOB __attribute__((section(".text#")))
+#elif defined(_MSC_VER)
+#define _MCO_ASM_BLOB __declspec(allocate(".text"))
+#pragma section(".text")
+#endif
+
+_MCO_ASM_BLOB static unsigned char _mco_wrap_main_code[] = {
+  0x4c, 0x89, 0xe9,          /* mov    %r13,%rcx */
+  0x41, 0xff, 0xe4,          /* jmpq   *%r12 */
+  0xc3,                      /* retq */
+};
+
+_MCO_ASM_BLOB static unsigned char _mco_switch_code[] = {
+  0x48, 0x8d, 0x05, 0xeb, 0x00, 0x00, 0x00,             /* lea    0xeb(%rip),%rax */
+  0x48, 0x89, 0x01,                                     /* mov    %rax,(%rcx) */
+  0x48, 0x89, 0x61, 0x08,                               /* mov    %rsp,0x8(%rcx) */
+  0x48, 0x89, 0x69, 0x10,                               /* mov    %rbp,0x10(%rcx) */
+  0x48, 0x89, 0x59, 0x18,                               /* mov    %rbx,0x18(%rcx) */
+  0x4c, 0x89, 0x61, 0x20,                               /* mov    %r12,0x20(%rcx) */
+  0x4c, 0x89, 0x69, 0x28,                               /* mov    %r13,0x28(%rcx) */
+  0x4c, 0x89, 0x71, 0x30,                               /* mov    %r14,0x30(%rcx) */
+  0x4c, 0x89, 0x79, 0x38,                               /* mov    %r15,0x38(%rcx) */
+  0x48, 0x89, 0x79, 0x40,                               /* mov    %rdi,0x40(%rcx) */
+  0x48, 0x89, 0x71, 0x48,                               /* mov    %rsi,0x48(%rcx) */
+  0x66, 0x0f, 0xd6, 0x71, 0x50,                         /* movq   %xmm6,0x50(%rcx) */
+  0x66, 0x0f, 0xd6, 0x79, 0x60,                         /* movq   %xmm7,0x60(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0x41, 0x70,                   /* movq   %xmm8,0x70(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0x89, 0x80, 0x00, 0x00, 0x00, /* movq   %xmm9,0x80(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0x91, 0x90, 0x00, 0x00, 0x00, /* movq   %xmm10,0x90(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0x99, 0xa0, 0x00, 0x00, 0x00, /* movq   %xmm11,0xa0(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0xa1, 0xb0, 0x00, 0x00, 0x00, /* movq   %xmm12,0xb0(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0xa9, 0xc0, 0x00, 0x00, 0x00, /* movq   %xmm13,0xc0(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0xb1, 0xd0, 0x00, 0x00, 0x00, /* movq   %xmm14,0xd0(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0xb9, 0xe0, 0x00, 0x00, 0x00, /* movq   %xmm15,0xe0(%rcx) */
+  0xf3, 0x44, 0x0f, 0x7e, 0xba, 0xe0, 0x00, 0x00, 0x00, /* movq   0xe0(%rdx),%xmm15 */
+  0xf3, 0x44, 0x0f, 0x7e, 0xb2, 0xd0, 0x00, 0x00, 0x00, /* movq   0xd0(%rdx),%xmm14 */
+  0xf3, 0x44, 0x0f, 0x7e, 0xaa, 0xc0, 0x00, 0x00, 0x00, /* movq   0xc0(%rdx),%xmm13 */
+  0xf3, 0x44, 0x0f, 0x7e, 0xa2, 0xb0, 0x00, 0x00, 0x00, /* movq   0xb0(%rdx),%xmm12 */
+  0xf3, 0x44, 0x0f, 0x7e, 0x9a, 0xa0, 0x00, 0x00, 0x00, /* movq   0xa0(%rdx),%xmm11 */
+  0xf3, 0x44, 0x0f, 0x7e, 0x92, 0x90, 0x00, 0x00, 0x00, /* movq   0x90(%rdx),%xmm10 */
+  0xf3, 0x44, 0x0f, 0x7e, 0x8a, 0x80, 0x00, 0x00, 0x00, /* movq   0x80(%rdx),%xmm9 */
+  0xf3, 0x44, 0x0f, 0x7e, 0x42, 0x70,                   /* movq   0x70(%rdx),%xmm8 */
+  0xf3, 0x0f, 0x7e, 0x7a, 0x60,                         /* movq   0x60(%rdx),%xmm7 */
+  0xf3, 0x0f, 0x7e, 0x72, 0x50,                         /* movq   0x50(%rdx),%xmm6 */
+  0x48, 0x8b, 0x72, 0x48,                               /* mov    0x48(%rdx),%rsi */
+  0x48, 0x8b, 0x7a, 0x40,                               /* mov    0x40(%rdx),%rdi */
+  0x4c, 0x8b, 0x7a, 0x38,                               /* mov    0x38(%rdx),%r15 */
+  0x4c, 0x8b, 0x72, 0x30,                               /* mov    0x30(%rdx),%r14 */
+  0x4c, 0x8b, 0x6a, 0x28,                               /* mov    0x28(%rdx),%r13 */
+  0x4c, 0x8b, 0x62, 0x20,                               /* mov    0x20(%rdx),%r12 */
+  0x48, 0x8b, 0x5a, 0x18,                               /* mov    0x18(%rdx),%rbx */
+  0x48, 0x8b, 0x6a, 0x10,                               /* mov    0x10(%rdx),%rbp */
+  0x48, 0x8b, 0x62, 0x08,                               /* mov    0x8(%rdx),%rsp */
+  0xff, 0x22,                                           /* jmpq   *(%rdx) */
+  0xc3,                                                 /* retq */
+};
+
+void (*_mco_wrap_main)(void) = (void(*)(void))(void*)_mco_wrap_main_code;
+void (*_mco_switch)(_mco_ctxbuf* from, _mco_ctxbuf* to) = (void(*)(_mco_ctxbuf* from, _mco_ctxbuf* to))(void*)_mco_switch_code;
+
+#else /* _WIN32 */
+
 typedef struct _mco_ctxbuf {
   void* buf[8]; /* rip, rsp, rbp, rbx, r12, r13, r14, r15 */
 } _mco_ctxbuf;
@@ -438,9 +509,14 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
     : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
 }
 
+#endif /* else _WIN32 */
+
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
+#ifndef _WIN32
   /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */
-  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - 128 - sizeof(size_t));
+  stack_size = stack_size - 128;
+#endif
+  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
   ctx->buf[0] = (void*)(_mco_wrap_main);
   ctx->buf[1] = (void*)(stack_high_ptr);
