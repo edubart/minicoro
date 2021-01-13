@@ -30,14 +30,15 @@ The API is inspired by Lua coroutines but with C use in mind.
 
 Most platforms are supported through different methods.
 
-| Architecture | System     | Method    |
-|--------------|------------|-----------|
-| x86_32       | (any OS)   | GCC asm   |
-| x86_64       | (any OS)   | GCC asm   |
-| ARM          | (any OS)   | GCC asm   |
-| ARM64        | (any OS)   | GCC asm   |
-| (any CPU)    | (any OS)   | ucontext  |
-| (any CPU)    | Windows    | fibers    |
+| Architecture | System      | Method    |
+|--------------|-------------|-----------|
+| x86_32       | (any OS)    | GCC asm   |
+| x86_64       | (any OS)    | GCC asm   |
+| ARM          | (any OS)    | GCC asm   |
+| ARM64        | (any OS)    | GCC asm   |
+| (any CPU)    | (any OS)    | ucontext  |
+| (any CPU)    | Windows     | fibers    |
+| WebAssembly  | Web         | fibers    |
 
 The ucontext method is used as a fallback if the compiler or CPU does not support GCC inline assembly.
 The fibers method is always used on Windows.
@@ -51,6 +52,7 @@ The fibers method is always used on Windows.
 - The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
 - Take care to not cause stack overflows, otherwise your program may crash or not, the behavior is undefined.
 - Some older operating systems may have defective ucontext implementations because this feature is not widely used, upgrade your OS.
+- On WebAssembly you must compile with emscripten flag `-s ASYNCIFY=1`.
 
 # Usage
 
@@ -275,7 +277,7 @@ extern "C" {
 
 /* Detect implementation based on OS, arch and compiler. */
 #if !defined(MCO_USE_UCONTEXT) && !defined(MCO_USE_FIBERS) && !defined(MCO_USE_ASM)
-  #ifdef _WIN32
+  #if defined(_WIN32) || defined(__EMSCRIPTEN__)
     #define MCO_USE_FIBERS
   #else
     #if __GNUC__ >= 3 /* Assembly extension supported. */
@@ -730,9 +732,9 @@ static void _mco_destroy_context(mco_coro* co) {
 }
 
 static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
-  /* Add enough space to hold mco_coro and _mco_context. */
-  size_t extra_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_context), 16);
-  desc->coro_size = _mco_align_forward(stack_size + extra_size, 4096);
+  desc->coro_size = _mco_align_forward(sizeof(mco_coro), 16) +
+                    _mco_align_forward(sizeof(_mco_context), 16) +
+                    stack_size + 16;
   desc->stack_size = stack_size; /* This is just a hint, it won't be the real one. */
 }
 
@@ -741,6 +743,8 @@ static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
 /* ---------------------------------------------------------------------------------------------- */
 
 #ifdef MCO_USE_FIBERS
+
+#ifdef _WIN32
 
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0400
@@ -819,9 +823,98 @@ static void _mco_destroy_context(mco_coro* co) {
 }
 
 static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
-  desc->coro_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_context), 16);
+  desc->coro_size = _mco_align_forward(sizeof(mco_coro), 16) +
+                    _mco_align_forward(sizeof(_mco_context), 16) +
+                    16;
   desc->stack_size = stack_size;
 }
+
+#elif defined(__EMSCRIPTEN__)
+
+#include <emscripten/fiber.h>
+
+#ifndef MCO_ASYNCFY_STACK_SIZE
+#define MCO_ASYNCFY_STACK_SIZE 16384
+#endif
+
+typedef struct _mco_context {
+  emscripten_fiber_t fib;
+  emscripten_fiber_t* back_fib;
+} _mco_context;
+
+static emscripten_fiber_t* running_fib = NULL;
+static unsigned char main_asyncify_stack[MCO_ASYNCFY_STACK_SIZE];
+static emscripten_fiber_t main_fib;
+
+static void _mco_wrap_main(void* co) {
+  _mco_main((mco_coro*)co);
+}
+
+static void _mco_jumpin(mco_coro* co) {
+  _mco_prepare_jumpin(co);
+  _mco_context* context = (_mco_context*)co->context;
+  emscripten_fiber_t* back_fib = running_fib;
+  if(!back_fib) {
+    back_fib = &main_fib;
+    emscripten_fiber_init_from_current_context(back_fib, main_asyncify_stack, MCO_ASYNCFY_STACK_SIZE);
+  }
+  running_fib = &context->fib;
+  context->back_fib = back_fib;
+  emscripten_fiber_swap(back_fib, &context->fib); /* Do the context switch. */
+}
+
+static void _mco_jumpout(mco_coro* co) {
+  _mco_prepare_jumpout(co);
+  _mco_context* context = (_mco_context*)co->context;
+  running_fib = context->back_fib;
+  emscripten_fiber_swap(&context->fib, context->back_fib); /* Do the context switch. */
+}
+
+static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
+  /* Determine the context address. */
+  size_t co_addr = (size_t)co;
+  size_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
+  size_t stack_addr = _mco_align_forward(context_addr + sizeof(_mco_context), 16);
+  size_t asyncify_stack_addr = _mco_align_forward(stack_addr + desc->stack_size, 16);
+  /* Initialize context. */
+  _mco_context* context = (_mco_context*)context_addr;
+  memset(context, 0, sizeof(_mco_context));
+  /* Initialize stack. */
+  void *stack_base = (void*)stack_addr;
+  size_t stack_size = asyncify_stack_addr - stack_addr;
+  void *asyncify_stack_base = (void*)asyncify_stack_addr;
+  size_t asyncify_stack_size = co_addr + desc->coro_size - asyncify_stack_addr;
+#ifdef MCO_ZERO_MEMORY
+  memset(stack_base, 0, stack_size);
+  memset(asyncify_stack_base, 0, asyncify_stack_size);
+#endif
+  /* Create the fiber. */
+  emscripten_fiber_init(&context->fib, _mco_wrap_main, co, stack_base, stack_size, asyncify_stack_base, asyncify_stack_size);
+  co->context = context;
+  co->stack_base = stack_base;
+  co->stack_size = stack_size;
+  return MCO_SUCCESS;
+}
+
+static void _mco_destroy_context(mco_coro* co) {
+  _mco_context* context = (_mco_context*)co->context;
+  /* Nothing to do. */
+}
+
+static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
+  desc->coro_size = _mco_align_forward(sizeof(mco_coro), 16) +
+                    _mco_align_forward(sizeof(_mco_context), 16) +
+                    _mco_align_forward(stack_size, 16) +
+                    _mco_align_forward(MCO_ASYNCFY_STACK_SIZE, 16) +
+                    16;
+  desc->stack_size = stack_size; /* This is just a hint, it won't be the real one. */
+}
+
+#else
+
+#error "Unsupported architecture for fibers method."
+
+#endif
 
 #endif /* MCO_USE_FIBERS */
 

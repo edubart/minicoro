@@ -12,8 +12,8 @@ void coro_entry(mco_coro* co) {
 int main() {
   // First initialize a `desc` object through `mco_desc_init`.
   mco_desc desc = mco_desc_init(coro_entry, 0);
-  // Configure `desc` fields when needed (e.g. customize user_data, stack_size or allocation functions).
-  desc.stack_size = 32768;
+  // Configure `desc` fields when needed (e.g. customize user_data or allocation functions).
+  desc.user_data = NULL;
   // Call `mco_create` with the output coroutine pointer and `desc` pointer.
   mco_coro* co;
   mco_result res = mco_create(&co, &desc);

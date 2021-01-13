@@ -31,14 +31,15 @@ The library assembly implementation is inspired by [Lua Coco](https://coco.luaji
 
 Most platforms are supported through different methods.
 
-| Architecture | System     | Method    |
-|--------------|------------|-----------|
-| x86_32       | (any OS)   | GCC asm   |
-| x86_64       | (any OS)   | GCC asm   |
-| ARM          | (any OS)   | GCC asm   |
-| ARM64        | (any OS)   | GCC asm   |
-| (any CPU)    | (any OS)   | ucontext  |
-| (any CPU)    | Windows    | fibers    |
+| Architecture | System      | Method    |
+|--------------|-------------|-----------|
+| x86_32       | (any OS)    | GCC asm   |
+| x86_64       | (any OS)    | GCC asm   |
+| ARM          | (any OS)    | GCC asm   |
+| ARM64        | (any OS)    | GCC asm   |
+| (any CPU)    | (any OS)    | ucontext  |
+| (any CPU)    | Windows     | fibers    |
+| WebAssembly  | Web         | fibers    |
 
 The ucontext method is used as a fallback if the compiler or CPU does not support GCC inline assembly.
 The fibers method is always used on Windows.
@@ -52,6 +53,7 @@ The fibers method is always used on Windows.
 - The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
 - Take care to not cause stack overflows, otherwise your program may crash or not, the behavior is undefined.
 - Some older operating systems may have defective ucontext implementations because this feature is not widely used, upgrade your OS.
+- On WebAssembly you must compile with emscripten flag `-s ASYNCIFY=1`.
 
 # Usage
 
@@ -83,8 +85,8 @@ void coro_entry(mco_coro* co) {
 int main() {
   // First initialize a `desc` object through `mco_desc_init`.
   mco_desc desc = mco_desc_init(coro_entry, 0);
-  // Configure `desc` fields when needed (e.g. customize user_data, stack_size or allocation functions).
-  desc.stack_size = 32768;
+  // Configure `desc` fields when needed (e.g. customize user_data or allocation functions).
+  desc.user_data = NULL;
   // Call `mco_create` with the output coroutine pointer and `desc` pointer.
   mco_coro* co;
   mco_result res = mco_create(&co, &desc);
@@ -277,7 +279,7 @@ int main() {
 
 # Updates
 
-- **13-Jan-2021**: Add support for ARM.
+- **13-Jan-2021**: Add support for ARM and WebAssembly.
 - **12-Jan-2021**: Some API changes and improvements.
 - **11-Jan-2021**: Support valgrind and add benchmarks.
 - **10-Jan-2021**: Minor API improvements and document more.
