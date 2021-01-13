@@ -889,6 +889,10 @@ static void _mco_jumpout(mco_coro* co) {
 }
 
 static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
+  if(emscripten_has_asyncify() != 1) {
+    MCO_LOG("failed to create fiber because ASYNCIFY is not enabled");
+    return MCO_MAKE_CONTEXT_ERROR;
+  }
   /* Determine the context address. */
   size_t co_addr = (size_t)co;
   size_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
