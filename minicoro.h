@@ -136,8 +136,8 @@ the user is encouraged to handle them properly.
 The following can be defined to change the library behavior:
 
 - `MCO_API`                   - Public API qualifier. Default is `extern`.
-- `MCO_STORAGE_SIZE`          - Size of coroutine storage buffer. Default is 1024.
 - `MCO_MIN_STACK_SIZE`        - Minimum stack size when creating a coroutine. Default is 32768.
+- `MCO_DEFAULT_STORAGE_SIZE`  - Size of coroutine storage buffer. Default is 1024.
 - `MCO_DEFAULT_STACK_SIZE`    - Default stack size when creating a coroutine. Default is 57344.
 - `MCO_MALLOC`                - Default allocation function. Default is `malloc`.
 - `MCO_FREE`                  - Default deallocation function. Default is `free`.
@@ -170,8 +170,8 @@ extern "C" {
 #endif
 
 /* Size of coroutine storage buffer. */
-#ifndef MCO_STORAGE_SIZE
-#define MCO_STORAGE_SIZE 1024
+#ifndef MCO_DEFAULT_STORAGE_SIZE
+#define MCO_DEFAULT_STORAGE_SIZE 1024
 #endif
 
 #include <stddef.h> /* for size_t */
@@ -214,8 +214,9 @@ struct mco_coro {
   void (*free_cb)(void* ptr, void* allocator_data);
   void* stack_base; /* Stack base address, can be used to scan memory in a garbage collector. */
   size_t stack_size;
+  unsigned char* storage;
+  size_t storage_available_size;
   size_t storage_size;
-  unsigned char storage[MCO_STORAGE_SIZE];
 };
 
 /* Structure used to initialize a coroutine. */
@@ -226,6 +227,7 @@ typedef struct mco_desc {
   void* (*malloc_cb)(size_t size, void* allocator_data); /* Custom allocation function. */
   void  (*free_cb)(void* ptr, void* allocator_data);     /* Custom deallocation function. */
   void* allocator_data;       /* User data pointer passed to `malloc`/`free` allocation functions. */
+  size_t storage_size;        /* Coroutine storage size, to be used with the storage APIs. */
   /* These must be initialized only through `mco_init_desc`. */
   size_t coro_size;           /* Coroutine structure size. */
   size_t stack_size;          /* Coroutine stack size. */
@@ -246,8 +248,8 @@ MCO_API void* mco_get_user_data(mco_coro* co);                                  
 MCO_API mco_result mco_set_storage(mco_coro* co, const void* src, size_t len);  /* Set the coroutine storage. Use to send values between yield and resume. */
 MCO_API mco_result mco_reset_storage(mco_coro* co);                             /* Clear the coroutine storage. Call this to reset storage before a yield or resume. */
 MCO_API mco_result mco_get_storage(mco_coro* co, void* dest, size_t len);       /* Get the coroutine storage. Use to receive values between yield and resume. */
-MCO_API size_t mco_get_storage_size(mco_coro* co);                              /* Get the available size to use on `mco_get_storage`. */
-MCO_API size_t mco_get_storage_max_size(mco_coro* co);                          /* Get the coroutine maximum storage size. */
+MCO_API size_t mco_get_storage_available_size(mco_coro* co);                    /* Get the available storage size to retrieve with `mco_get_storage`. */
+MCO_API size_t mco_get_storage_size(mco_coro* co);                              /* Get the coroutine storage size. */
 MCO_API void* mco_get_storage_pointer(mco_coro* co);                            /* Get the coroutine storage pointer. Use only if you do not wish to use the set/get methods. */
 
 /* Misc functions. */
@@ -698,10 +700,14 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context and stack address. */
   size_t co_addr = (size_t)co;
   size_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
-  size_t stack_addr = _mco_align_forward(context_addr + sizeof(_mco_context), 16);
+  size_t storage_addr = _mco_align_forward(context_addr + sizeof(_mco_context), 16);
+  size_t stack_addr = _mco_align_forward(storage_addr + desc->storage_size, 16);
   /* Initialize context. */
   _mco_context* context = (_mco_context*)context_addr;
   memset(context, 0, sizeof(_mco_context));
+  /* Initialize storage. */
+  unsigned char* storage = (unsigned char*)storage_addr;
+  memset(storage, 0, desc->storage_size);
   /* Initialize stack. */
   void *stack_base = (void*)stack_addr;
   size_t stack_size = co_addr + desc->coro_size - stack_addr;
@@ -719,6 +725,8 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   co->context = context;
   co->stack_base = stack_base;
   co->stack_size = stack_size;
+  co->storage = storage;
+  co->storage_size = desc->storage_size;
   return MCO_SUCCESS;
 }
 
@@ -737,6 +745,7 @@ static void _mco_destroy_context(mco_coro* co) {
 static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
   desc->coro_size = _mco_align_forward(sizeof(mco_coro), 16) +
                     _mco_align_forward(sizeof(_mco_context), 16) +
+                    _mco_align_forward(desc->storage_size, 16) +
                     stack_size + 16;
   desc->stack_size = stack_size; /* This is just a hint, it won't be the real one. */
 }
@@ -801,9 +810,13 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context address. */
   size_t co_addr = (size_t)co;
   size_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
+  size_t storage_addr = _mco_align_forward(context_addr + sizeof(_mco_context), 16);
   /* Initialize context. */
   _mco_context* context = (_mco_context*)context_addr;
   memset(context, 0, sizeof(_mco_context));
+  /* Initialize storage. */
+  unsigned char* storage = (unsigned char*)storage_addr;
+  memset(storage, 0, desc->storage_size);
   /* Create the fiber. */
   _mco_fiber* fib = (_mco_fiber*)CreateFiberEx(desc->stack_size, desc->stack_size, FIBER_FLAG_FLOAT_SWITCH, _mco_wrap_main, co);
   if(!fib) {
@@ -814,6 +827,8 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   co->context = context;
   co->stack_base = fib->stack_base;
   co->stack_size = desc->stack_size;
+  co->storage = storage;
+  co->storage_size = desc->storage_size;
   return MCO_SUCCESS;
 }
 
@@ -828,6 +843,7 @@ static void _mco_destroy_context(mco_coro* co) {
 static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
   desc->coro_size = _mco_align_forward(sizeof(mco_coro), 16) +
                     _mco_align_forward(sizeof(_mco_context), 16) +
+                    _mco_align_forward(desc->storage_size, 16) +
                     16;
   desc->stack_size = stack_size;
 }
@@ -877,11 +893,15 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context address. */
   size_t co_addr = (size_t)co;
   size_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
-  size_t stack_addr = _mco_align_forward(context_addr + sizeof(_mco_context), 16);
+  size_t storage_addr = _mco_align_forward(context_addr + sizeof(_mco_context), 16);
+  size_t stack_addr = _mco_align_forward(storage_addr + desc->storage_size, 16);
   size_t asyncify_stack_addr = _mco_align_forward(stack_addr + desc->stack_size, 16);
   /* Initialize context. */
   _mco_context* context = (_mco_context*)context_addr;
   memset(context, 0, sizeof(_mco_context));
+  /* Initialize storage. */
+  unsigned char* storage = (unsigned char*)storage_addr;
+  memset(storage, 0, desc->storage_size);
   /* Initialize stack. */
   void *stack_base = (void*)stack_addr;
   size_t stack_size = asyncify_stack_addr - stack_addr;
@@ -896,6 +916,8 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   co->context = context;
   co->stack_base = stack_base;
   co->stack_size = stack_size;
+  co->storage = storage;
+  co->storage_size = desc->storage_size;
   return MCO_SUCCESS;
 }
 
@@ -907,6 +929,7 @@ static void _mco_destroy_context(mco_coro* co) {
 static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
   desc->coro_size = _mco_align_forward(sizeof(mco_coro), 16) +
                     _mco_align_forward(sizeof(_mco_context), 16) +
+                    _mco_align_forward(desc->storage_size, 16) +
                     _mco_align_forward(stack_size, 16) +
                     _mco_align_forward(MCO_ASYNCFY_STACK_SIZE, 16) +
                     16;
@@ -941,6 +964,7 @@ mco_desc mco_desc_init(void (*func)(mco_coro* co), size_t stack_size) {
   desc.free_cb = mco_free;
 #endif
   desc.func = func;
+  desc.storage_size = MCO_DEFAULT_STORAGE_SIZE;
   _mco_init_desc_sizes(&desc, stack_size);
   return desc;
 }
@@ -1097,7 +1121,7 @@ mco_result mco_set_storage(mco_coro* co, const void* src, size_t len) {
     MCO_LOG("attempt to use an invalid coroutine");
     return MCO_INVALID_COROUTINE;
   } else if(len > 0) {
-    if(len > MCO_STORAGE_SIZE) {
+    if(len > co->storage_size) {
       MCO_LOG("attempt to set storage from a buffer that is too large");
       return MCO_NOT_ENOUGH_SPACE;
     }
@@ -1108,12 +1132,12 @@ mco_result mco_set_storage(mco_coro* co, const void* src, size_t len) {
     memcpy(&co->storage[0], src, len);
   }
 #ifdef MCO_ZERO_MEMORY
-  if(co->storage_size > len) {
+  if(co->storage_available_size > len) {
     /* Clear garbage in old storage. */
-    memset(&co->storage[len], 0, co->storage_size - len);
+    memset(&co->storage[len], 0, co->storage_available_size - len);
   }
 #endif
-  co->storage_size = len;
+  co->storage_available_size = len;
   return MCO_SUCCESS;
 }
 
@@ -1122,7 +1146,7 @@ mco_result mco_get_storage(mco_coro* co, void* dest, size_t len) {
     MCO_LOG("attempt to use an invalid coroutine");
     return MCO_INVALID_COROUTINE;
   } else if(len > 0) {
-    if(len > MCO_STORAGE_SIZE) {
+    if(len > co->storage_size) {
       MCO_LOG("attempt to get storage into a buffer that is too large");
       return MCO_NOT_ENOUGH_SPACE;
     }
@@ -1130,7 +1154,7 @@ mco_result mco_get_storage(mco_coro* co, void* dest, size_t len) {
       MCO_LOG("attempt to get storage into an invalid pointer");
       return MCO_INVALID_POINTER;
     }
-    if(len != co->storage_size) {
+    if(len != co->storage_available_size) {
       MCO_LOG("attempt to get storage of size that mismatches last set size");
       return MCO_NOT_ENOUGH_SPACE;
     }
@@ -1139,16 +1163,18 @@ mco_result mco_get_storage(mco_coro* co, void* dest, size_t len) {
   return MCO_SUCCESS;
 }
 
+size_t mco_get_storage_available_size(mco_coro* co) {
+  if(co == NULL) {
+    return 0;
+  }
+  return co->storage_available_size;
+}
+
 size_t mco_get_storage_size(mco_coro* co) {
   if(co == NULL) {
     return 0;
   }
   return co->storage_size;
-}
-
-size_t mco_get_storage_max_size(mco_coro* co) {
-  _MCO_UNUSED(co);
-  return MCO_STORAGE_SIZE;
 }
 
 void* mco_get_storage_pointer(mco_coro* co) {

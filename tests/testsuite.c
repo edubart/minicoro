@@ -13,7 +13,7 @@ void coro_entry2(mco_coro* co2) {
   assert(mco_get_storage(co2, &co, sizeof(co)) == MCO_SUCCESS);
   assert(mco_reset_storage(co2) == MCO_SUCCESS);
   assert(mco_status(co) == MCO_NORMAL);
-  assert(mco_get_storage(co2, &co, sizeof(co)) != MCO_SUCCESS);
+  assert(mco_get_storage_available_size(co2) == 0);
   printf("hello 2\n");
   assert(mco_yield(mco_running()) == MCO_SUCCESS);
   printf("world! 2\n");
@@ -33,8 +33,8 @@ void coro_entry(mco_coro* co) {
   assert(mco_status(co) == MCO_RUNNING);
 
   /* Get storage 1 */
-  assert(mco_get_storage_size(co) == 6);
-  assert(mco_get_storage(co, buffer, mco_get_storage_size(co)) == MCO_SUCCESS);
+  assert(mco_get_storage_available_size(co) == 6);
+  assert(mco_get_storage(co, buffer, mco_get_storage_available_size(co)) == MCO_SUCCESS);
   assert(strcmp(buffer, "hello") == 0);
   puts(buffer);
 
@@ -46,8 +46,8 @@ void coro_entry(mco_coro* co) {
   assert(mco_yield(co) == MCO_SUCCESS);
 
   /* Get storage 2 */
-  assert(mco_get_storage_size(co) == 7);
-  assert(mco_get_storage(co, buffer, mco_get_storage_size(co)) == MCO_SUCCESS);
+  assert(mco_get_storage_available_size(co) == 7);
+  assert(mco_get_storage(co, buffer, mco_get_storage_available_size(co)) == MCO_SUCCESS);
   assert(strcmp(buffer, "world!") == 0);
   puts(buffer);
 
@@ -61,7 +61,7 @@ void coro_entry(mco_coro* co) {
   assert(mco_set_storage(co2, &co, sizeof(co)) == MCO_SUCCESS);
   assert(mco_resume(co2) == MCO_SUCCESS);
   assert(mco_resume(co2) == MCO_SUCCESS);
-  assert(mco_get_storage(co2, &co, sizeof(co)) != MCO_SUCCESS);
+  assert(mco_get_storage_available_size(co2) == 0);
   assert(mco_status(co2) == MCO_DEAD);
   assert(mco_status(co) == MCO_RUNNING);
   assert(mco_running() == co);

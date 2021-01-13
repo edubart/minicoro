@@ -137,8 +137,8 @@ the user is encouraged to handle them properly.
 The following can be defined to change the library behavior:
 
 - `MCO_API`                   - Public API qualifier. Default is `extern`.
-- `MCO_STORAGE_SIZE`          - Size of coroutine storage buffer. Default is 1024.
 - `MCO_MIN_STACK_SIZE`        - Minimum stack size when creating a coroutine. Default is 32768.
+- `MCO_DEFAULT_STORAGE_SIZE`  - Size of coroutine storage buffer. Default is 1024.
 - `MCO_DEFAULT_STACK_SIZE`    - Default stack size when creating a coroutine. Default is 57344.
 - `MCO_MALLOC`                - Default allocation function. Default is `malloc`.
 - `MCO_FREE`                  - Default deallocation function. Default is `free`.
@@ -178,6 +178,7 @@ typedef struct mco_desc {
   void* (*malloc_cb)(size_t size, void* allocator_data); /* Custom allocation function. */
   void  (*free_cb)(void* ptr, void* allocator_data);     /* Custom deallocation function. */
   void* allocator_data;       /* User data pointer passed to `malloc`/`free` allocation functions. */
+  size_t storage_size;        /* Coroutine storage size, to be used with the storage APIs. */
   /* These must be initialized only through `mco_init_desc`. */
   size_t coro_size;           /* Coroutine structure size. */
   size_t stack_size;          /* Coroutine stack size. */
@@ -198,9 +199,13 @@ void* mco_get_user_data(mco_coro* co);                                  /* Get c
 mco_result mco_set_storage(mco_coro* co, const void* src, size_t len);  /* Set the coroutine storage. Use to send values between yield and resume. */
 mco_result mco_reset_storage(mco_coro* co);                             /* Clear the coroutine storage. Call this to reset storage before a yield or resume. */
 mco_result mco_get_storage(mco_coro* co, void* dest, size_t len);       /* Get the coroutine storage. Use to receive values between yield and resume. */
-size_t mco_get_storage_size(mco_coro* co);                              /* Get the available size to use on `mco_get_storage`. */
-size_t mco_get_storage_max_size(mco_coro* co);                          /* Get the coroutine maximum storage size. */
+size_t mco_get_storage_available_size(mco_coro* co);                    /* Get the available storage size to retrieve with `mco_get_storage`. */
+size_t mco_get_storage_size(mco_coro* co);                              /* Get the coroutine storage size. */
 void* mco_get_storage_pointer(mco_coro* co);                            /* Get the coroutine storage pointer. Use only if you do not wish to use the set/get methods. */
+
+/* Misc functions. */
+mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
+const char* mco_result_description(mco_result res); /* Get the description of a result. */
 ```
 
 # Complete Example
