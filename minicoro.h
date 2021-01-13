@@ -440,8 +440,7 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
   /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */
-  /* Reserve 16 bytes for aligned return address space. */
-  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - 128 - 16);
+  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - 128 - sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
   ctx->buf[0] = (void*)(_mco_wrap_main);
   ctx->buf[1] = (void*)(stack_high_ptr);
@@ -490,7 +489,7 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
 #endif /* __PIC__ */
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
-  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - 2*sizeof(size_t));
+  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - 16 - 1*sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddead);  /* Dummy return address. */
   stack_high_ptr[1] = (void*)(co);
   ctx->buf[0] = (void*)(_mco_main);
