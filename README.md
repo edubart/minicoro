@@ -148,7 +148,8 @@ The following can be defined to change the library behavior:
 - `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
 - `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding storage, intended for garbage collected environments.
 - `MCO_USE_ASM`               - Force use of assembly context switch implementation.
-- `MCO_USE_UCONTEXT`          - Force use ucontext of context switch implementation.
+- `MCO_USE_UCONTEXT`          - Force use of ucontext context switch implementation.
+- `MCO_USE_FIBERS`            - Force use of fibers context switch implementation.
 - `MCO_USE_VALGRIND`          - Define if you want run with valgrind to fix accessing memory errors.
 
 # Benchmarks

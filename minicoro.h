@@ -147,7 +147,8 @@ The following can be defined to change the library behavior:
 - `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
 - `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding storage, intended for garbage collected environments.
 - `MCO_USE_ASM`               - Force use of assembly context switch implementation.
-- `MCO_USE_UCONTEXT`          - Force use ucontext of context switch implementation.
+- `MCO_USE_UCONTEXT`          - Force use of ucontext context switch implementation.
+- `MCO_USE_FIBERS`            - Force use of fibers context switch implementation.
 - `MCO_USE_VALGRIND`          - Define if you want run with valgrind to fix accessing memory errors.
 
 # License
@@ -544,7 +545,7 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
   void** stack_high_ptr = (void**)((size_t)stack_base + stack_size);
   ctx->buf[_MCO_FLOAT_SAVE+0] = (void*)(co);
   ctx->buf[_MCO_FLOAT_SAVE+1] = (void*)(_mco_main);
-  ctx->buf[_MCO_FLOAT_SAVE+2] = (void*)(0xdeadc0c0); /* Dummy return address. */
+  ctx->buf[_MCO_FLOAT_SAVE+2] = (void*)(0xdeaddead); /* Dummy return address. */
   ctx->buf[_MCO_FLOAT_SAVE+8] = (void*)(_mco_wrap_main);
   ctx->buf[_MCO_FLOAT_SAVE+9] = stack_high_ptr;
   return MCO_SUCCESS;
