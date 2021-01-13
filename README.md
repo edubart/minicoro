@@ -287,7 +287,7 @@ int main() {
 
 # Updates
 
-- **13-Jan-2021**: Add support for ARM and WebAssembly.
+- **13-Jan-2021**: Add support for ARM and WebAssembly. Add Public Domain and MIT No Attribution license.
 - **12-Jan-2021**: Some API changes and improvements.
 - **11-Jan-2021**: Support valgrind and add benchmarks.
 - **10-Jan-2021**: Minor API improvements and document more.
@@ -295,4 +295,4 @@ int main() {
 
 # License
 
-MIT license, see LICENSE file for licensing information.
+Your choice of either Public Domain or MIT No Attribution, see LICENSE file.
