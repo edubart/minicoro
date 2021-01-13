@@ -29,9 +29,19 @@ The library assembly implementation is inspired by [Lua Coco](https://coco.luaji
 
 # Implementation details
 
-On Unix systems the context switching is implemented via assembly instructions for
-x86/x86_64 and aarch64 architectures otherwise fallbacks to ucontext implementation.
-On Windows the context switching is implemented via the Fibers API.
+Most platforms are supported through different methods.
+
+| Architecture | System     | Method    |
+|--------------|------------|-----------|
+| x86_32       | (any OS)   | GCC asm   |
+| x86_64       | (any OS)   | GCC asm   |
+| ARM          | (any OS)   | GCC asm   |
+| ARM64        | (any OS)   | GCC asm   |
+| (any CPU)    | (any OS)   | ucontext  |
+| (any CPU)    | Windows    | fibers    |
+
+The ucontext method is used as a fallback if the compiler or CPU does not support GCC inline assembly.
+The fibers method is always used on Windows.
 
 # Caveats
 
@@ -144,11 +154,11 @@ The following can be defined to change the library behavior:
 The coroutine library was benchmarked for x86_64 counting CPU cycles
 for context switch (triggered in resume or yield) and initialization.
 
-| Backend           | Context switch | Initialize   | Uninitialize |
-|-------------------|----------------|--------------|--------------|
-| x86_64 assembly   | 19 cycles      | 113 cycles   | 25 cycles    |
-| x86_64 fibers     | 44 cycles      | 10217 cycles | 1957 cycles  |
-| x86_64 ucontext   | 569 cycles     | 700 cycles   | 25 cycles    |
+| CPU    | Method   | Context switch | Initialize   | Uninitialize |
+|--------|----------|----------------|--------------|--------------|
+| x86_64 | GCC asm  | 19 cycles      | 113 cycles   | 25 cycles    |
+| x86_64 | fibers   | 44 cycles      | 10217 cycles | 1957 cycles  |
+| x86_64 | ucontext | 569 cycles     | 700 cycles   | 25 cycles    |
 
 _NOTE_: Tested on Intel(R) Core(TM) i7-3770K CPU @ 3.50GHz with pre allocated coroutines.
 
@@ -267,6 +277,7 @@ int main() {
 
 # Updates
 
+- **13-Jan-2021**: Add support for ARM.
 - **12-Jan-2021**: Some API changes and improvements.
 - **11-Jan-2021**: Support valgrind and add benchmarks.
 - **10-Jan-2021**: Minor API improvements and document more.

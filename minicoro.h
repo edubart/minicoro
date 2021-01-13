@@ -28,9 +28,19 @@ The API is inspired by Lua coroutines but with C use in mind.
 
 # Implementation details
 
-On Unix systems the context switching is implemented via assembly instructions for
-x86/x86_64 and aarch64 architectures otherwise fallbacks to ucontext implementation.
-On Windows the context switching is implemented via the Fibers API.
+Most platforms are supported through different methods.
+
+| Architecture | System     | Method    |
+|--------------|------------|-----------|
+| x86_32       | (any OS)   | GCC asm   |
+| x86_64       | (any OS)   | GCC asm   |
+| ARM          | (any OS)   | GCC asm   |
+| ARM64        | (any OS)   | GCC asm   |
+| (any CPU)    | (any OS)   | ucontext  |
+| (any CPU)    | Windows    | fibers    |
+
+The ucontext method is used as a fallback if the compiler or CPU does not support GCC inline assembly.
+The fibers method is always used on Windows.
 
 # Caveats
 
@@ -269,7 +279,7 @@ extern "C" {
     #define MCO_USE_FIBERS
   #else
     #if __GNUC__ >= 3 /* Assembly extension supported. */
-      #if defined(__x86_64__) || defined(__i386) || defined(__i386__) || defined(__aarch64__)
+      #if defined(__x86_64__) || defined(__i386) || defined(__i386__) || defined(__ARM_EABI__) || defined(__aarch64__)
         #define MCO_USE_ASM
       #else
         #define MCO_USE_UCONTEXT
@@ -457,7 +467,7 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
 }
 #else
 typedef struct _mco_ctxbuf {
-  void* buf[3]; /* eip, esp, ebp, ebx */
+  void* buf[3]; /* eip, esp, ebp */
 } _mco_ctxbuf;
 static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   __asm__ __volatile__ (
@@ -478,6 +488,63 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
   stack_high_ptr[1] = (void*)(co);
   ctx->buf[0] = (void*)(_mco_main);
   ctx->buf[1] = (void*)(stack_high_ptr);
+  return MCO_SUCCESS;
+}
+
+#elif defined(__ARM_EABI__)
+
+#if __SOFTFP__
+#define _MCO_FLOAT_SAVE   0
+#else
+#define _MCO_FLOAT_SAVE   16
+#endif
+
+typedef struct _mco_ctxbuf {
+  void* buf[_MCO_FLOAT_SAVE + 10]; /* [d8-d15,] r4-r11, lr, sp */
+} _mco_ctxbuf;
+
+void _mco_wrap_main(void);
+int _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to);
+
+__asm__(
+  ".text\n"
+  ".globl _mco_switch\n"
+  ".type _mco_switch #function\n"
+  ".hidden _mco_switch\n"
+  "_mco_switch:\n"
+#if _MCO_FLOAT_SAVE
+  "  vstmia r0!, {d8-d15}\n"
+#endif
+  "  stmia r0, {r4-r11, lr}\n"
+  "  str sp, [r0, #9*4]\n"
+#if _MCO_FLOAT_SAVE
+  "  vldmia r1!, {d8-d15}\n"
+#endif
+  "  ldr sp, [r1, #9*4]\n"
+  "  ldmia r1, {r4-r11, pc}\n"
+  ".size _mco_switch, .-_mco_switch\n"
+);
+
+__asm__(
+  ".text\n"
+  ".globl _mco_wrap_main\n"
+  ".type _mco_wrap_main #function\n"
+  ".hidden _mco_wrap_main\n"
+  "_mco_wrap_main:\n"
+  "  mov r0, r4\n"
+  "  mov ip, r5\n"
+  "  mov lr, r6\n"
+  "  bx ip\n"
+  ".size _mco_wrap_main, .-_mco_wrap_main\n"
+);
+
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
+  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size);
+  ctx->buf[_MCO_FLOAT_SAVE+0] = (void*)(co);
+  ctx->buf[_MCO_FLOAT_SAVE+1] = (void*)(_mco_main);
+  ctx->buf[_MCO_FLOAT_SAVE+2] = (void*)(0xdeadc0c0); /* Dummy return address. */
+  ctx->buf[_MCO_FLOAT_SAVE+8] = (void*)(_mco_wrap_main);
+  ctx->buf[_MCO_FLOAT_SAVE+9] = stack_high_ptr;
   return MCO_SUCCESS;
 }
 
@@ -549,7 +616,7 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
 
 #else
 
-#error "Unsupported architecture for assembly backend."
+#error "Unsupported architecture for assembly method."
 
 #endif /* ARCH */
 
