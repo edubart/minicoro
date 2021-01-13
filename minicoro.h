@@ -245,8 +245,10 @@ MCO_API void* mco_get_user_data(mco_coro* co);                                  
 /* Storage interface functions, used to pass values between yield and resume. */
 MCO_API mco_result mco_set_storage(mco_coro* co, const void* src, size_t len);  /* Set the coroutine storage. Use to send values between yield and resume. */
 MCO_API mco_result mco_reset_storage(mco_coro* co);                             /* Clear the coroutine storage. Call this to reset storage before a yield or resume. */
-MCO_API size_t mco_get_storage(mco_coro* co, void* dest, size_t len);           /* Get the coroutine storage. Use to receive values between yield and resume. */
-MCO_API size_t mco_get_storage_size(mco_coro* co);                              /* Get the coroutine storage size. */
+MCO_API mco_result mco_get_storage(mco_coro* co, void* dest, size_t len);       /* Get the coroutine storage. Use to receive values between yield and resume. */
+MCO_API size_t mco_get_storage_size(mco_coro* co);                              /* Get the available size to use on `mco_get_storage`. */
+MCO_API size_t mco_get_storage_max_size(mco_coro* co);                          /* Get the coroutine maximum storage size. */
+MCO_API void* mco_get_storage_pointer(mco_coro* co);                            /* Get the coroutine storage pointer. Use only if you do not wish to use the set/get methods. */
 
 /* Misc functions. */
 MCO_API mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
@@ -1115,24 +1117,45 @@ mco_result mco_set_storage(mco_coro* co, const void* src, size_t len) {
   return MCO_SUCCESS;
 }
 
-size_t mco_get_storage(mco_coro* co, void* dest, size_t len) {
-  if(!co || !dest) {
-    return 0;
-  }
-  if(len > co->storage_size) {
-    len = co->storage_size;
-  }
-  if(len > 0) {
+mco_result mco_get_storage(mco_coro* co, void* dest, size_t len) {
+  if(!co) {
+    MCO_LOG("attempt to use an invalid coroutine");
+    return MCO_INVALID_COROUTINE;
+  } else if(len > 0) {
+    if(len > MCO_STORAGE_SIZE) {
+      MCO_LOG("attempt to get storage into a buffer that is too large");
+      return MCO_NOT_ENOUGH_SPACE;
+    }
+    if(!dest) {
+      MCO_LOG("attempt to get storage into an invalid pointer");
+      return MCO_INVALID_POINTER;
+    }
+    if(len != co->storage_size) {
+      MCO_LOG("attempt to get storage of size that mismatches last set size");
+      return MCO_NOT_ENOUGH_SPACE;
+    }
     memcpy(dest, &co->storage[0], len);
   }
-  return len;
+  return MCO_SUCCESS;
 }
 
 size_t mco_get_storage_size(mco_coro* co) {
-  if(co != NULL) {
-    return co->storage_size;
+  if(co == NULL) {
+    return 0;
   }
-  return 0;
+  return co->storage_size;
+}
+
+size_t mco_get_storage_max_size(mco_coro* co) {
+  _MCO_UNUSED(co);
+  return MCO_STORAGE_SIZE;
+}
+
+void* mco_get_storage_pointer(mco_coro* co) {
+  if(!co) {
+    return NULL;
+  }
+  return co->storage;
 }
 
 mco_result mco_reset_storage(mco_coro* co) {

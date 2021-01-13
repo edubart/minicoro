@@ -13,8 +13,9 @@ static void fibonacci_coro(mco_coro* co) {
 
   /* Retrieve max value. */
   unsigned long max;
-  if(mco_get_storage(co, &max, sizeof(max)) != sizeof(max))
-    fail("Failed to retrieve coroutine storage", MCO_GENERIC_ERROR);
+  mco_result res = mco_get_storage(co, &max, sizeof(max));
+  if(res != MCO_SUCCESS)
+    fail("Failed to retrieve coroutine storage", res);
 
   while(1) {
     /* Yield the next Fibonacci number. */
@@ -52,8 +53,9 @@ int main() {
 
     /* Retrieve storage set in last coroutine yield. */
     unsigned long ret = 0;
-    if(mco_get_storage(co, &ret, sizeof(ret)) != sizeof(ret))
-      fail("Failed to retrieve coroutine storage", MCO_GENERIC_ERROR);
+    res = mco_get_storage(co, &ret, sizeof(ret));
+    if(res != MCO_SUCCESS)
+      fail("Failed to retrieve coroutine storage", res);
     printf("fib %d = %lu\n", counter, ret);
     counter = counter + 1;
   }

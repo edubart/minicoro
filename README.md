@@ -197,12 +197,10 @@ void* mco_get_user_data(mco_coro* co);                                  /* Get c
 /* Storage interface functions, used to pass values between yield and resume. */
 mco_result mco_set_storage(mco_coro* co, const void* src, size_t len);  /* Set the coroutine storage. Use to send values between yield and resume. */
 mco_result mco_reset_storage(mco_coro* co);                             /* Clear the coroutine storage. Call this to reset storage before a yield or resume. */
-size_t mco_get_storage(mco_coro* co, void* dest, size_t len);           /* Get the coroutine storage. Use to receive values between yield and resume. */
-size_t mco_get_storage_size(mco_coro* co);                              /* Get the coroutine storage size. */
-
-/* Misc functions. */
-mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
-const char* mco_result_description(mco_result res); /* Get the description of a result. */
+mco_result mco_get_storage(mco_coro* co, void* dest, size_t len);       /* Get the coroutine storage. Use to receive values between yield and resume. */
+size_t mco_get_storage_size(mco_coro* co);                              /* Get the available size to use on `mco_get_storage`. */
+size_t mco_get_storage_max_size(mco_coro* co);                          /* Get the coroutine maximum storage size. */
+void* mco_get_storage_pointer(mco_coro* co);                            /* Get the coroutine storage pointer. Use only if you do not wish to use the set/get methods. */
 ```
 
 # Complete Example
@@ -225,8 +223,9 @@ static void fibonacci_coro(mco_coro* co) {
 
   /* Retrieve max value. */
   unsigned long max;
-  if(mco_get_storage(co, &max, sizeof(max)) != sizeof(max))
-    fail("Failed to retrieve coroutine storage", MCO_GENERIC_ERROR);
+  mco_result res = mco_get_storage(co, &max, sizeof(max));
+  if(res != MCO_SUCCESS)
+    fail("Failed to retrieve coroutine storage", res);
 
   while(1) {
     /* Yield the next Fibonacci number. */
@@ -264,8 +263,9 @@ int main() {
 
     /* Retrieve storage set in last coroutine yield. */
     unsigned long ret = 0;
-    if(mco_get_storage(co, &ret, sizeof(ret)) != sizeof(ret))
-      fail("Failed to retrieve coroutine storage", MCO_GENERIC_ERROR);
+    res = mco_get_storage(co, &ret, sizeof(ret));
+    if(res != MCO_SUCCESS)
+      fail("Failed to retrieve coroutine storage", res);
     printf("fib %d = %lu\n", counter, ret);
     counter = counter + 1;
   }
@@ -276,6 +276,7 @@ int main() {
     fail("Failed to destroy coroutine", res);
   return 0;
 }
+
 ```
 
 # Updates

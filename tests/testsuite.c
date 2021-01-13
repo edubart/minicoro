@@ -10,10 +10,10 @@ void coro_entry2(mco_coro* co2) {
 
   assert(mco_running() == co2);
   assert(mco_status(co2) == MCO_RUNNING);
-  assert(mco_get_storage(co2, &co, sizeof(co)) == sizeof(co));
+  assert(mco_get_storage(co2, &co, sizeof(co)) == MCO_SUCCESS);
   assert(mco_reset_storage(co2) == MCO_SUCCESS);
   assert(mco_status(co) == MCO_NORMAL);
-  assert(mco_get_storage(co2, &co, sizeof(co)) == 0);
+  assert(mco_get_storage(co2, &co, sizeof(co)) != MCO_SUCCESS);
   printf("hello 2\n");
   assert(mco_yield(mco_running()) == MCO_SUCCESS);
   printf("world! 2\n");
@@ -27,13 +27,14 @@ void coro_entry(mco_coro* co) {
   mco_coro* co2;
 
   /* Startup checks */
+  assert(mco_get_storage_pointer(co) == co->storage);
   assert(mco_get_user_data(co) == &dummy_user_data);
   assert(mco_running() == co);
   assert(mco_status(co) == MCO_RUNNING);
 
   /* Get storage 1 */
-  assert(mco_get_storage(co, buffer, 128) == 6);
   assert(mco_get_storage_size(co) == 6);
+  assert(mco_get_storage(co, buffer, mco_get_storage_size(co)) == MCO_SUCCESS);
   assert(strcmp(buffer, "hello") == 0);
   puts(buffer);
 
@@ -45,8 +46,8 @@ void coro_entry(mco_coro* co) {
   assert(mco_yield(co) == MCO_SUCCESS);
 
   /* Get storage 2 */
-  assert(mco_get_storage(co, buffer, 128) == 7);
   assert(mco_get_storage_size(co) == 7);
+  assert(mco_get_storage(co, buffer, mco_get_storage_size(co)) == MCO_SUCCESS);
   assert(strcmp(buffer, "world!") == 0);
   puts(buffer);
 
@@ -60,7 +61,7 @@ void coro_entry(mco_coro* co) {
   assert(mco_set_storage(co2, &co, sizeof(co)) == MCO_SUCCESS);
   assert(mco_resume(co2) == MCO_SUCCESS);
   assert(mco_resume(co2) == MCO_SUCCESS);
-  assert(mco_get_storage(co2, &co, sizeof(co)) == 0);
+  assert(mco_get_storage(co2, &co, sizeof(co)) != MCO_SUCCESS);
   assert(mco_status(co2) == MCO_DEAD);
   assert(mco_status(co) == MCO_RUNNING);
   assert(mco_running() == co);
@@ -85,7 +86,7 @@ int main(void) {
   assert(mco_status(co) == MCO_SUSPENDED);
 
   /* Get storage 1 */
-  assert(mco_get_storage(co, &ret, sizeof(ret)) == sizeof(ret));
+  assert(mco_get_storage(co, &ret, sizeof(ret)) == MCO_SUCCESS);
   assert(ret == 1);
 
   /* Set storage 2 */
@@ -97,7 +98,7 @@ int main(void) {
   assert(mco_status(co) == MCO_DEAD);
 
   /* Get storage 2 */
-  assert(mco_get_storage(co, &ret, sizeof(ret)) == sizeof(ret));
+  assert(mco_get_storage(co, &ret, sizeof(ret)) == MCO_SUCCESS);
   assert(ret == 2);
 
   /* Destroy */
