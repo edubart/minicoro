@@ -747,11 +747,10 @@ static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
 #endif
 #include <windows.h>
 
-typedef struct _mco_fcontext {
+typedef struct _mco_context {
   void* fib;
   void* back_fib;
-  size_t stack_size;
-} _mco_fcontext;
+} _mco_context;
 
 static void _mco_jumpin(mco_coro* co) {
   void *cur_fib = GetCurrentFiber();
@@ -759,19 +758,19 @@ static void _mco_jumpin(mco_coro* co) {
     cur_fib = ConvertThreadToFiber(NULL);
   }
   MCO_ASSERT(cur_fib != NULL);
-  _mco_fcontext* context = (_mco_fcontext*)co->context;
+  _mco_context* context = (_mco_context*)co->context;
   context->back_fib = cur_fib;
   _mco_prepare_jumpin(co);
   SwitchToFiber(context->fib);
 }
 
-static void CALLBACK _mco_wrap_main(mco_coro* co) {
-  _mco_main(co);
+static void CALLBACK _mco_wrap_main(void* co) {
+  _mco_main((mco_coro*)co);
 }
 
 static void _mco_jumpout(mco_coro* co) {
   _mco_prepare_jumpout(co);
-  _mco_fcontext* context = (_mco_fcontext*)co->context;
+  _mco_context* context = (_mco_context*)co->context;
   void* back_fib = context->back_fib;
   MCO_ASSERT(back_fib != NULL);
   context->back_fib = NULL;
@@ -795,9 +794,11 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   /* Determine the context address. */
   size_t co_addr = (size_t)co;
   size_t context_addr = _mco_align_forward(co_addr + sizeof(mco_coro), 16);
-  _mco_fcontext* context = (_mco_fcontext*)context_addr;
+  /* Initialize context. */
+  _mco_context* context = (_mco_context*)context_addr;
+  memset(context, 0, sizeof(_mco_context));
   /* Create the fiber. */
-  _mco_fiber* fib = (_mco_fiber*)CreateFiberEx(desc->stack_size, desc->stack_size, FIBER_FLAG_FLOAT_SWITCH, (LPFIBER_START_ROUTINE)_mco_wrap_main, co);
+  _mco_fiber* fib = (_mco_fiber*)CreateFiberEx(desc->stack_size, desc->stack_size, FIBER_FLAG_FLOAT_SWITCH, _mco_wrap_main, co);
   if(!fib) {
     MCO_LOG("failed to create fiber");
     return MCO_MAKE_CONTEXT_ERROR;
@@ -810,7 +811,7 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
 }
 
 static void _mco_destroy_context(mco_coro* co) {
-  _mco_fcontext* context = (_mco_fcontext*)co->context;
+  _mco_context* context = (_mco_context*)co->context;
   if(context && context->fib) {
     DeleteFiber(context->fib);
     context->fib = NULL;
@@ -818,7 +819,7 @@ static void _mco_destroy_context(mco_coro* co) {
 }
 
 static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
-  desc->coro_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_fcontext), 16);
+  desc->coro_size = _mco_align_forward(_mco_align_forward(sizeof(mco_coro), 16) + sizeof(_mco_context), 16);
   desc->stack_size = stack_size;
 }
 
