@@ -26,6 +26,7 @@ The library assembly implementation is inspired by [Lua Coco](https://coco.luaji
 - Works in most C89 compilers.
 - Error prone API, returning proper error codes on misuse.
 - Support running with valgrind.
+- Support running with ASan (AddressSanitizer).
 
 # Implementation details
 
@@ -50,7 +51,7 @@ The fibers method is the default on Windows, to use the assembly method you have
 - Don't use coroutines with C++ exceptions, this is not supported.
 - When using C++ RAII (i.e. destructors) you must resume the coroutine until it dies to properly execute all destructors.
 - To use in multithread applications, you must compile with C compiler that supports `thread_local` qualifier.
-- Address sanitizers for C may trigger false warnings when using coroutines.
+- Some unsupported sanitizers for C may trigger false warnings when using coroutines.
 - The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
 - Take care to not cause stack overflows, otherwise your program may crash or not, the behavior is undefined.
 - Some older operating systems may have defective ucontext implementations because this feature is not widely used, upgrade your OS.
@@ -288,6 +289,7 @@ int main() {
 
 # Updates
 
+- **14-Jan-2021**: Add support for running with ASan (AddressSanitizer).
 - **13-Jan-2021**: Add support for ARM and WebAssembly. Add Public Domain and MIT No Attribution license.
 - **12-Jan-2021**: Some API changes and improvements.
 - **11-Jan-2021**: Support valgrind and add benchmarks.

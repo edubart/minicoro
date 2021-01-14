@@ -25,6 +25,7 @@ The API is inspired by Lua coroutines but with C use in mind.
 - Works in most C89 compilers.
 - Error prone API, returning proper error codes on misuse.
 - Support running with valgrind.
+- Support running with ASan (AddressSanitizer).
 
 # Implementation details
 
@@ -49,7 +50,7 @@ The fibers method is the default on Windows, to use the assembly method you have
 - Don't use coroutines with C++ exceptions, this is not supported.
 - When using C++ RAII (i.e. destructors) you must resume the coroutine until it dies to properly execute all destructors.
 - To use in multithread applications, you must compile with C compiler that supports `thread_local` qualifier.
-- Address sanitizers for C may trigger false warnings when using coroutines.
+- Some unsupported sanitizers for C may trigger false warnings when using coroutines.
 - The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
 - Take care to not cause stack overflows, otherwise your program may crash or not, the behavior is undefined.
 - Some older operating systems may have defective ucontext implementations because this feature is not widely used, upgrade your OS.
@@ -218,6 +219,7 @@ struct mco_coro {
   unsigned char* storage;
   size_t storage_available_size;
   size_t storage_size;
+  void* fake_stack_save; /* Used by address sanitizer. */
 };
 
 /* Structure used to initialize a coroutine. */
@@ -355,6 +357,18 @@ static void mco_free(void* ptr, void* allocator_data) {
 }
 #endif /* MCO_NO_DEFAULT_ALLOCATORS */
 
+#if defined(__has_feature)
+  #if __has_feature(address_sanitizer)
+    #define _MCO_USE_ASAN
+  #endif
+#elif defined(__SANITIZE_ADDRESS__)
+  #define _MCO_USE_ASAN
+#endif
+#ifdef _MCO_USE_ASAN
+void __sanitizer_start_switch_fiber(void** fake_stack_save, const void *bottom, size_t size);
+void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void **bottom_old, size_t *size_old);
+#endif
+
 #include <string.h> /* For memcpy and memset. */
 
 /* Utility for aligning addresses. */
@@ -374,6 +388,15 @@ static void _mco_prepare_jumpin(mco_coro* co) {
     prev_co->state = MCO_NORMAL;
   }
   mco_current_co = co;
+#ifdef _MCO_USE_ASAN
+  if(prev_co) {
+    void* bottom_old = NULL;
+    size_t size_old = 0;
+    __sanitizer_finish_switch_fiber(prev_co->fake_stack_save, (const void**)&bottom_old, &size_old);
+    prev_co->fake_stack_save = NULL;
+  }
+  __sanitizer_start_switch_fiber(&co->fake_stack_save, co->stack_base, co->stack_size);
+#endif
 }
 
 static void _mco_prepare_jumpout(mco_coro* co) {
@@ -386,6 +409,15 @@ static void _mco_prepare_jumpout(mco_coro* co) {
     prev_co->state = MCO_RUNNING;
   }
   mco_current_co = prev_co;
+#ifdef _MCO_USE_ASAN
+  void* bottom_old = NULL;
+  size_t size_old = 0;
+  __sanitizer_finish_switch_fiber(co->fake_stack_save, (const void**)&bottom_old, &size_old);
+  co->fake_stack_save = NULL;
+  if(prev_co) {
+    __sanitizer_start_switch_fiber(&prev_co->fake_stack_save, bottom_old, size_old);
+  }
+#endif
 }
 
 static void _mco_jumpin(mco_coro* co);
@@ -760,14 +792,14 @@ typedef struct _mco_context {
 } _mco_context;
 
 static void _mco_jumpin(mco_coro* co) {
-  _mco_prepare_jumpin(co);
   _mco_context* context = (_mco_context*)co->context;
+  _mco_prepare_jumpin(co);
   _mco_switch(&context->back_ctx, &context->ctx); /* Do the context switch. */
 }
 
 static void _mco_jumpout(mco_coro* co) {
-  _mco_prepare_jumpout(co);
   _mco_context* context = (_mco_context*)co->context;
+  _mco_prepare_jumpout(co);
   _mco_switch(&context->ctx, &context->back_ctx); /* Do the context switch. */
 }
 
@@ -860,11 +892,11 @@ static void CALLBACK _mco_wrap_main(void* co) {
 }
 
 static void _mco_jumpout(mco_coro* co) {
-  _mco_prepare_jumpout(co);
   _mco_context* context = (_mco_context*)co->context;
   void* back_fib = context->back_fib;
   MCO_ASSERT(back_fib != NULL);
   context->back_fib = NULL;
+  _mco_prepare_jumpout(co);
   SwitchToFiber(back_fib);
 }
 
@@ -945,7 +977,6 @@ static void _mco_wrap_main(void* co) {
 }
 
 static void _mco_jumpin(mco_coro* co) {
-  _mco_prepare_jumpin(co);
   _mco_context* context = (_mco_context*)co->context;
   emscripten_fiber_t* back_fib = running_fib;
   if(!back_fib) {
@@ -954,13 +985,14 @@ static void _mco_jumpin(mco_coro* co) {
   }
   running_fib = &context->fib;
   context->back_fib = back_fib;
+  _mco_prepare_jumpin(co);
   emscripten_fiber_swap(back_fib, &context->fib); /* Do the context switch. */
 }
 
 static void _mco_jumpout(mco_coro* co) {
-  _mco_prepare_jumpout(co);
   _mco_context* context = (_mco_context*)co->context;
   running_fib = context->back_fib;
+  _mco_prepare_jumpout(co);
   emscripten_fiber_swap(&context->fib, context->back_fib); /* Do the context switch. */
 }
 
@@ -1146,7 +1178,7 @@ mco_result mco_destroy(mco_coro* co) {
     return res;
   /* Free the coroutine. */
   if(!co->free_cb) {
-    MCO_LOG("attempt destroy a coroutine that has not free callback");
+    MCO_LOG("attempt destroy a coroutine that has no free callback");
     return MCO_INVALID_POINTER;
   }
   co->free_cb(co, co->allocator_data);

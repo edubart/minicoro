@@ -65,6 +65,7 @@ void coro_entry(mco_coro* co) {
   assert(mco_status(co2) == MCO_DEAD);
   assert(mco_status(co) == MCO_RUNNING);
   assert(mco_running() == co);
+  assert(mco_destroy(co2) == MCO_SUCCESS);
 }
 
 int main(void) {
