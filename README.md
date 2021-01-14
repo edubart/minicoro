@@ -158,13 +158,14 @@ The following can be defined to change the library behavior:
 The coroutine library was benchmarked for x86_64 counting CPU cycles
 for context switch (triggered in resume or yield) and initialization.
 
-| CPU    | Method   | Context switch | Initialize   | Uninitialize |
-|--------|----------|----------------|--------------|--------------|
-| x86_64 | GCC asm  | 19 cycles      | 113 cycles   | 25 cycles    |
-| x86_64 | fibers   | 44 cycles      | 10217 cycles | 1957 cycles  |
-| x86_64 | ucontext | 569 cycles     | 700 cycles   | 25 cycles    |
+| CPU Arch | OS       | Method   | Context switch | Initialize   | Uninitialize |
+|----------|----------|----------|----------------|--------------|--------------|
+| x86_64   | Linux    | GCC asm  | 9 cycles       | 31 cycles    | 14 cycles    |
+| x86_64   | Linux    | ucontext | 352 cycles     | 383 cycles   | 14 cycles    |
+| x86_64   | Windows  | fibers   | 69 cycles      | 10564 cycles | 11167 cycles |
+| x86_64   | Windows  | blob asm | 31 cycles      | 74 cycles    | 14 cycles    |
 
-_NOTE_: Tested on Intel(R) Core(TM) i7-3770K CPU @ 3.50GHz with pre allocated coroutines.
+_NOTE_: Tested on Intel Core i7-8750H CPU @ 2.20GHz with pre allocated coroutines.
 
 # Cheatsheet
 
