@@ -56,6 +56,32 @@ The fibers method is the default on Windows, to use the assembly method you have
 - Some older operating systems may have defective ucontext implementations because this feature is not widely used, upgrade your OS.
 - On WebAssembly you must compile with emscripten flag `-s ASYNCIFY=1`.
 
+# Introduction
+
+A coroutine represents an independent "green" thread of execution.
+Unlike threads in multithread systems, however,
+a coroutine only suspends its execution by explicitly calling a yield function.
+
+You create a coroutine by calling `mco_create`.
+Its sole argument is a `mco_desc` structure with a description for the coroutine.
+The `mco_create` function only creates a new coroutine and returns a handle to it, it does not start the coroutine.
+
+You execute a coroutine by calling `mco_resume`.
+When calling a resume function the coroutine starts its execution by calling its body function.
+After the coroutine starts running, it runs until it terminates or yields.
+
+A coroutine yields by calling `mco_yield`.
+When a coroutine yields, the corresponding resume returns immediately,
+even if the yield happens inside nested function calls (that is, not in the main function).
+The next time you resume the same coroutine, it continues its execution from the point where it yielded.
+
+To associate a persistent value with the coroutine,
+you can  optionally set `user_data` on its creation and later retrieve with `mco_get_user_data`.
+
+To pass values between resume and yield,
+you can optionally use `mco_set_storage` and `mco_get_storage` APIs,
+they are intended to pass temporary values.
+
 # Usage
 
 To use minicoro, do the following in one .c file:
@@ -239,7 +265,7 @@ typedef struct mco_desc {
 } mco_desc;
 
 /* Coroutine functions. */
-MCO_API mco_desc mco_desc_init(void (*func)(mco_coro* co), size_t stack_size);  /* Initialize description of a coroutine. */
+MCO_API mco_desc mco_desc_init(void (*func)(mco_coro* co), size_t stack_size);  /* Initialize description of a coroutine. When stack size is 0 then MCO_DEFAULT_STACK_SIZE is be used. */
 MCO_API mco_result mco_init(mco_coro* co, mco_desc* desc);                      /* Initialize the coroutine. */
 MCO_API mco_result mco_uninit(mco_coro* co);                                    /* Uninitialize the coroutine, may fail if it's not dead or suspended. */
 MCO_API mco_result mco_create(mco_coro** out_co, mco_desc* desc);               /* Allocates and initializes a new coroutine. */
