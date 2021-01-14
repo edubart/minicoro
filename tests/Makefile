@@ -6,6 +6,7 @@ RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
 # CFLAGS+=-DMCO_USE_ASM
 # CFLAGS+=-DMCO_USE_UCONTEXT
 # CFLAGS+=-fsanitize=address
+# CFLAGS+=-fsanitize=thread
 # CFLAGS+=-DMCO_USE_VALGRIND
 # RUNNER=valgrind
 
@@ -13,11 +14,12 @@ RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
 # OUTEXT=.exe
 # RUNNER=
 
-all: testsuite example simple benchmark
+all: testsuite example mt-example simple benchmark
 
-test: testsuite example simple
+test: testsuite example mt-example simple
 	$(RUNNER) ./testsuite$(OUTEXT)
 	$(RUNNER) ./example$(OUTEXT)
+	$(RUNNER) ./mt-example$(OUTEXT)
 	$(RUNNER) ./simple$(OUTEXT)
 
 bench: benchmark
@@ -29,6 +31,9 @@ testsuite: testsuite.c ../minicoro.h Makefile
 example: example.c ../minicoro.h Makefile
 	$(CC) $(CFLAGS) example.c -o example
 
+mt-example: mt-example.c ../minicoro.h Makefile
+	$(CC) $(CFLAGS) -std=gnu11 -lpthread mt-example.c -o mt-example
+
 simple: simple.c ../minicoro.h Makefile
 	$(CC) $(CFLAGS) -std=c99 simple.c -o simple
 
@@ -36,4 +41,4 @@ benchmark: benchmark.c ../minicoro.h Makefile
 	$(CC) $(CFLAGS) $(RELEASE_CFLAGS) -std=c99 benchmark.c -o benchmark
 
 clean:
-	rm -f testsuite$(OUTEXT) example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT)
+	rm -f testsuite$(OUTEXT) example$(OUTEXT) mt-example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT)

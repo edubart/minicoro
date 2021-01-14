@@ -104,6 +104,6 @@ int main(void) {
 
   /* Destroy */
   assert(mco_destroy(co) == MCO_SUCCESS);
-  printf("finished!\n");
+  printf("Test suite succeeded!\n");
   return 0;
 }

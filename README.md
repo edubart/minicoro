@@ -26,7 +26,7 @@ The library assembly implementation is inspired by [Lua Coco](https://coco.luaji
 - Works in most C89 compilers.
 - Error prone API, returning proper error codes on misuse.
 - Support running with valgrind.
-- Support running with ASan (AddressSanitizer).
+- Support running with ASan (AddressSanitizer) and TSan (ThreadSanitizer).
 
 # Implementation details
 
@@ -221,7 +221,7 @@ The following is a more complete example, generating Fibonacci numbers:
 #include <stdio.h>
 
 static void fail(const char* message, mco_result res) {
-  printf("%s: %s", message, mco_result_description(res));
+  printf("%s: %s\n", message, mco_result_description(res));
   exit(-1);
 }
 
@@ -238,7 +238,7 @@ static void fibonacci_coro(mco_coro* co) {
   while(1) {
     /* Yield the next Fibonacci number. */
     mco_set_storage(co, &m, sizeof(m));
-    mco_result res = mco_yield(co);
+    res = mco_yield(co);
     if(res != MCO_SUCCESS)
       fail("Failed to yield coroutine", res);
 
@@ -284,12 +284,11 @@ int main() {
     fail("Failed to destroy coroutine", res);
   return 0;
 }
-
 ```
 
 # Updates
 
-- **14-Jan-2021**: Add support for running with ASan (AddressSanitizer).
+- **14-Jan-2021**: Add support for running with ASan (AddressSanitizer) and TSan (ThreadSanitizer).
 - **13-Jan-2021**: Add support for ARM and WebAssembly. Add Public Domain and MIT No Attribution license.
 - **12-Jan-2021**: Some API changes and improvements.
 - **11-Jan-2021**: Support valgrind and add benchmarks.

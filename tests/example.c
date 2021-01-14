@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 static void fail(const char* message, mco_result res) {
-  printf("%s: %s", message, mco_result_description(res));
+  printf("%s: %s\n", message, mco_result_description(res));
   exit(-1);
 }
 
@@ -20,7 +20,7 @@ static void fibonacci_coro(mco_coro* co) {
   while(1) {
     /* Yield the next Fibonacci number. */
     mco_set_storage(co, &m, sizeof(m));
-    mco_result res = mco_yield(co);
+    res = mco_yield(co);
     if(res != MCO_SUCCESS)
       fail("Failed to yield coroutine", res);
 

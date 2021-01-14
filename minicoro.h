@@ -25,7 +25,7 @@ The API is inspired by Lua coroutines but with C use in mind.
 - Works in most C89 compilers.
 - Error prone API, returning proper error codes on misuse.
 - Support running with valgrind.
-- Support running with ASan (AddressSanitizer).
+- Support running with ASan (AddressSanitizer) and TSan (ThreadSanitizer).
 
 # Implementation details
 
@@ -219,7 +219,9 @@ struct mco_coro {
   unsigned char* storage;
   size_t storage_available_size;
   size_t storage_size;
-  void* fake_stack_save; /* Used by address sanitizer. */
+  void* asan_prev_stack; /* Used by address sanitizer. */
+  void* tsan_prev_fiber; /* Used by thread sanitizer. */
+  void* tsan_fiber; /* Used by thread sanitizer. */
 };
 
 /* Structure used to initialize a coroutine. */
@@ -324,20 +326,38 @@ extern "C" {
   #endif
 #endif
 
-#ifdef MCO_NO_MULTITHREAD
-  #define _MCO_THREAD_LOCAL
-#else
-  #ifdef thread_local
-    #define _MCO_THREAD_LOCAL thread_local
-  #elif __STDC_VERSION__ >= 201112 && !defined(__STDC_NO_THREADS__)
-    #define _MCO_THREAD_LOCAL _Thread_local
-  #elif defined(_WIN32) && (defined(_MSC_VER) || defined(__ICL) ||  defined(__DMC__) ||  defined(__BORLANDC__))
-    #define _MCO_THREAD_LOCAL __declspec(thread)
-  #elif defined(__GNUC__) || defined(__SUNPRO_C) || defined(__xlC__)
-    #define _MCO_THREAD_LOCAL __thread
-  #else /* No thread local support, `mco_running` will be thread unsafe. */
-    #define _MCO_THREAD_LOCAL
-    #define MCO_NO_MULTITHREAD
+#ifndef MCO_THREAD_LOCAL
+  #ifdef MCO_NO_MULTITHREAD
+    #define MCO_THREAD_LOCAL
+  #else
+    #ifdef thread_local
+      #define MCO_THREAD_LOCAL thread_local
+    #elif __STDC_VERSION__ >= 201112 && !defined(__STDC_NO_THREADS__)
+      #define MCO_THREAD_LOCAL _Thread_local
+    #elif defined(_WIN32) && (defined(_MSC_VER) || defined(__ICL) ||  defined(__DMC__) ||  defined(__BORLANDC__))
+      #define MCO_THREAD_LOCAL __declspec(thread)
+    #elif defined(__GNUC__) || defined(__SUNPRO_C) || defined(__xlC__)
+      #define MCO_THREAD_LOCAL __thread
+    #else /* No thread local support, `mco_running` will be thread unsafe. */
+      #define MCO_THREAD_LOCAL
+      #define MCO_NO_MULTITHREAD
+    #endif
+  #endif
+#endif
+
+#ifndef MCO_FORCE_INLINE
+  #ifdef _MSC_VER
+    #define MCO_FORCE_INLINE __forceinline
+  #elif defined(__GNUC__)
+    #if defined(__STRICT_ANSI__)
+      #define MCO_FORCE_INLINE __inline__ __attribute__((always_inline))
+    #else
+      #define MCO_FORCE_INLINE inline __attribute__((always_inline))
+    #endif
+  #elif defined(__BORLANDC__) || defined(__DMC__) || defined(__SC__) || defined(__WATCOMC__) || defined(__LCC__) ||  defined(__DECC)
+    #define MCO_FORCE_INLINE __inline
+  #else /* No inline support. */
+    #define MCO_FORCE_INLINE
   #endif
 #endif
 
@@ -361,27 +381,41 @@ static void mco_free(void* ptr, void* allocator_data) {
   #if __has_feature(address_sanitizer)
     #define _MCO_USE_ASAN
   #endif
-#elif defined(__SANITIZE_ADDRESS__)
+  #if __has_feature(thread_sanitizer)
+    #define _MCO_USE_TSAN
+  #endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
   #define _MCO_USE_ASAN
+#endif
+#if defined(__SANITIZE_THREAD__)
+  #define _MCO_USE_TSAN
 #endif
 #ifdef _MCO_USE_ASAN
 void __sanitizer_start_switch_fiber(void** fake_stack_save, const void *bottom, size_t size);
 void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void **bottom_old, size_t *size_old);
 #endif
+#ifdef _MCO_USE_TSAN
+void* __tsan_get_current_fiber(void);
+void* __tsan_create_fiber(unsigned flags);
+void __tsan_destroy_fiber(void* fiber);
+void __tsan_switch_to_fiber(void* fiber, unsigned flags);
+#endif
 
 #include <string.h> /* For memcpy and memset. */
 
 /* Utility for aligning addresses. */
-static size_t _mco_align_forward(size_t addr, size_t align) {
+static MCO_FORCE_INLINE size_t _mco_align_forward(size_t addr, size_t align) {
   return (addr + (align-1)) & ~(align-1);
 }
 
 /* Variable holding the current running coroutine per thread. */
-static _MCO_THREAD_LOCAL mco_coro* mco_current_co = NULL;
+static MCO_THREAD_LOCAL mco_coro* mco_current_co = NULL;
 
-static void _mco_prepare_jumpin(mco_coro* co) {
+static MCO_FORCE_INLINE void _mco_prepare_jumpin(mco_coro* co) {
   /* Set the old coroutine to normal state and update it. */
   mco_coro* prev_co = mco_running(); /* Must access through `mco_running`. */
+  MCO_ASSERT(co->prev_co == NULL);
   co->prev_co = prev_co;
   if(prev_co) {
     MCO_ASSERT(prev_co->state == MCO_RUNNING);
@@ -392,14 +426,18 @@ static void _mco_prepare_jumpin(mco_coro* co) {
   if(prev_co) {
     void* bottom_old = NULL;
     size_t size_old = 0;
-    __sanitizer_finish_switch_fiber(prev_co->fake_stack_save, (const void**)&bottom_old, &size_old);
-    prev_co->fake_stack_save = NULL;
+    __sanitizer_finish_switch_fiber(prev_co->asan_prev_stack, (const void**)&bottom_old, &size_old);
+    prev_co->asan_prev_stack = NULL;
   }
-  __sanitizer_start_switch_fiber(&co->fake_stack_save, co->stack_base, co->stack_size);
+  __sanitizer_start_switch_fiber(&co->asan_prev_stack, co->stack_base, co->stack_size);
+#endif
+#ifdef _MCO_USE_TSAN
+  co->tsan_prev_fiber = __tsan_get_current_fiber();
+  __tsan_switch_to_fiber(co->tsan_fiber, 0);
 #endif
 }
 
-static void _mco_prepare_jumpout(mco_coro* co) {
+static MCO_FORCE_INLINE void _mco_prepare_jumpout(mco_coro* co) {
   /* Switch back to the previous running coroutine. */
   MCO_ASSERT(mco_running() == co);
   mco_coro* prev_co = co->prev_co;
@@ -412,11 +450,16 @@ static void _mco_prepare_jumpout(mco_coro* co) {
 #ifdef _MCO_USE_ASAN
   void* bottom_old = NULL;
   size_t size_old = 0;
-  __sanitizer_finish_switch_fiber(co->fake_stack_save, (const void**)&bottom_old, &size_old);
-  co->fake_stack_save = NULL;
+  __sanitizer_finish_switch_fiber(co->asan_prev_stack, (const void**)&bottom_old, &size_old);
+  co->asan_prev_stack = NULL;
   if(prev_co) {
-    __sanitizer_start_switch_fiber(&prev_co->fake_stack_save, bottom_old, size_old);
+    __sanitizer_start_switch_fiber(&prev_co->asan_prev_stack, bottom_old, size_old);
   }
+#endif
+#ifdef _MCO_USE_TSAN
+  void* tsan_prev_fiber = co->tsan_prev_fiber;
+  co->tsan_prev_fiber = NULL;
+  __tsan_switch_to_fiber(tsan_prev_fiber, 0);
 #endif
 }
 
@@ -517,7 +560,7 @@ static void _mco_wrap_main(void) {
     "jmpq *%r12");
 }
 
-static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   __asm__ __volatile__ (
     "leaq 1f(%%rip), %%rax\n\t"
     "movq %%rax, (%0)\n\t"
@@ -563,7 +606,7 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
 typedef struct _mco_ctxbuf {
   void* buf[4]; /* eip, esp, ebp, ebx */
 } _mco_ctxbuf;
-static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   __asm__ __volatile__ (
     "call 1f\n"
     "1:\tpopl %%eax\n\t"
@@ -583,7 +626,7 @@ static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
 typedef struct _mco_ctxbuf {
   void* buf[3]; /* eip, esp, ebp */
 } _mco_ctxbuf;
-static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   __asm__ __volatile__ (
     "movl $1f, (%0)\n\t"
     "movl %%esp, 4(%0)\n\t"
@@ -752,7 +795,7 @@ static void _mco_wrap_main(unsigned int lo) {
 }
 #endif
 
-static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   int res = swapcontext(from, to);
   _MCO_UNUSED(res);
   MCO_ASSERT(res == 0);
@@ -849,7 +892,7 @@ static void _mco_destroy_context(mco_coro* co) {
 #endif
 }
 
-static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
+static MCO_FORCE_INLINE void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
   desc->coro_size = _mco_align_forward(sizeof(mco_coro), 16) +
                     _mco_align_forward(sizeof(_mco_context), 16) +
                     _mco_align_forward(desc->storage_size, 16) +
@@ -947,7 +990,7 @@ static void _mco_destroy_context(mco_coro* co) {
   }
 }
 
-static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
+static MCO_FORCE_INLINE void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
   desc->coro_size = _mco_align_forward(sizeof(mco_coro), 16) +
                     _mco_align_forward(sizeof(_mco_context), 16) +
                     _mco_align_forward(desc->storage_size, 16) +
@@ -1037,7 +1080,7 @@ static void _mco_destroy_context(mco_coro* co) {
   /* Nothing to do. */
 }
 
-static void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
+static MCO_FORCE_INLINE void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
   desc->coro_size = _mco_align_forward(sizeof(mco_coro), 16) +
                     _mco_align_forward(sizeof(_mco_context), 16) +
                     _mco_align_forward(desc->storage_size, 16) +
@@ -1119,6 +1162,9 @@ mco_result mco_init(mco_coro* co, mco_desc* desc) {
   co->allocator_data = desc->allocator_data;
   co->func = desc->func;
   co->user_data = desc->user_data;
+#ifdef _MCO_USE_TSAN
+  co->tsan_fiber = __tsan_create_fiber(0);
+#endif
   return MCO_SUCCESS;
 }
 
@@ -1134,6 +1180,12 @@ mco_result mco_uninit(mco_coro* co) {
   }
   /* The coroutine is now dead and cannot be used anymore. */
   co->state = MCO_DEAD;
+#ifdef _MCO_USE_TSAN
+  if(co->tsan_fiber != NULL) {
+    __tsan_destroy_fiber(co->tsan_fiber);
+    co->tsan_fiber = NULL;
+  }
+#endif
   _mco_destroy_context(co);
   return MCO_SUCCESS;
 }
