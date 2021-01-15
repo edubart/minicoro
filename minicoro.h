@@ -21,11 +21,10 @@ The API is inspired by Lua coroutines but with C use in mind.
 - Minimal, self contained and no external dependencies.
 - Readable sources and documented.
 - Implemented via assembly, ucontext or fibers.
-- Lightweight and efficient.
+- Lightweight and very efficient.
 - Works in most C89 compilers.
 - Error prone API, returning proper error codes on misuse.
-- Support running with valgrind.
-- Support running with ASan (AddressSanitizer) and TSan (ThreadSanitizer).
+- Support running with Valgrind, ASan (AddressSanitizer) and TSan (ThreadSanitizer).
 
 # Implementation details
 
@@ -33,17 +32,20 @@ Most platforms are supported through different methods.
 
 | Architecture | System      | Method    |
 |--------------|-------------|-----------|
-| x86_32       | (any OS)    | GCC asm   |
-| x86_64       | (any OS)    | GCC asm   |
-| ARM          | (any OS)    | GCC asm   |
-| ARM64        | (any OS)    | GCC asm   |
+| x86_32       | (any OS)    | assembly  |
+| x86_64       | (any OS)    | assembly  |
+| ARM          | (any OS)    | assembly  |
+| ARM64        | (any OS)    | assembly  |
 | (any CPU)    | (any OS)    | ucontext  |
+| x86_64       | Windows     | assembly  |
 | (any CPU)    | Windows     | fibers    |
-| x86_64       | Windows     | blob asm  |
 | WebAssembly  | Web         | fibers    |
 
-The ucontext method is used as a fallback if the compiler or CPU does not support GCC inline assembly.
-The fibers method is the default on Windows, to use the assembly method you have to explicitly enable it.
+The assembly method is used by default if supported by the compiler and CPU,
+otherwise ucontext or fiber method is used as a fallback.
+
+The assembly method is very efficient, it just take a few cycles
+to create, resume, yield or destroy a coroutine.
 
 # Caveats
 
@@ -313,7 +315,13 @@ extern "C" {
 
 /* Detect implementation based on OS, arch and compiler. */
 #if !defined(MCO_USE_UCONTEXT) && !defined(MCO_USE_FIBERS) && !defined(MCO_USE_ASM)
-  #if defined(_WIN32) || defined(__EMSCRIPTEN__)
+  #if defined(_WIN32)
+    #if (defined(__GNUC__) && defined(__x86_64__)) || (defined(_MSC_VER) && defined(_M_X64))
+      #define MCO_USE_ASM
+    #else
+      #define MCO_USE_FIBERS
+    #endif
+  #elif defined(__EMSCRIPTEN__)
     #define MCO_USE_FIBERS
   #else
     #if __GNUC__ >= 3 /* Assembly extension supported. */
@@ -504,13 +512,17 @@ static void _mco_main(mco_coro* co) {
 
 #ifdef MCO_USE_ASM
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(_M_X64)
 
 #ifdef _WIN32
 
 typedef struct _mco_ctxbuf {
   void* buf[10]; /* rip, rsp, rbp, rbx, r12, r13, r14, r15, rdi, rsi */
   void* xmm[10*2]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
+  void* fiber_storage;
+  void* dealloc_stack;
+  void* stack_limit;
+  void* stack_base;
 } _mco_ctxbuf;
 
 #ifdef __GNUC__
@@ -521,60 +533,94 @@ typedef struct _mco_ctxbuf {
 #endif
 
 _MCO_ASM_BLOB static unsigned char _mco_wrap_main_code[] = {
-  0x4c, 0x89, 0xe9,          /* mov    %r13,%rcx */
-  0x41, 0xff, 0xe4,          /* jmpq   *%r12 */
-  0xc3,                      /* retq */
+  0x4c, 0x89, 0xe9,                                       /* mov    %r13,%rcx */
+  0x41, 0xff, 0xe4,                                       /* jmpq   *%r12 */
+  0xc3,                                                   /* retq */
+  0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90    /* nop */
 };
 
 _MCO_ASM_BLOB static unsigned char _mco_switch_code[] = {
-  0x48, 0x8d, 0x05, 0xeb, 0x00, 0x00, 0x00,             /* lea    0xeb(%rip),%rax */
-  0x48, 0x89, 0x01,                                     /* mov    %rax,(%rcx) */
-  0x48, 0x89, 0x61, 0x08,                               /* mov    %rsp,0x8(%rcx) */
-  0x48, 0x89, 0x69, 0x10,                               /* mov    %rbp,0x10(%rcx) */
-  0x48, 0x89, 0x59, 0x18,                               /* mov    %rbx,0x18(%rcx) */
-  0x4c, 0x89, 0x61, 0x20,                               /* mov    %r12,0x20(%rcx) */
-  0x4c, 0x89, 0x69, 0x28,                               /* mov    %r13,0x28(%rcx) */
-  0x4c, 0x89, 0x71, 0x30,                               /* mov    %r14,0x30(%rcx) */
-  0x4c, 0x89, 0x79, 0x38,                               /* mov    %r15,0x38(%rcx) */
-  0x48, 0x89, 0x79, 0x40,                               /* mov    %rdi,0x40(%rcx) */
-  0x48, 0x89, 0x71, 0x48,                               /* mov    %rsi,0x48(%rcx) */
-  0x66, 0x0f, 0xd6, 0x71, 0x50,                         /* movq   %xmm6,0x50(%rcx) */
-  0x66, 0x0f, 0xd6, 0x79, 0x60,                         /* movq   %xmm7,0x60(%rcx) */
-  0x66, 0x44, 0x0f, 0xd6, 0x41, 0x70,                   /* movq   %xmm8,0x70(%rcx) */
-  0x66, 0x44, 0x0f, 0xd6, 0x89, 0x80, 0x00, 0x00, 0x00, /* movq   %xmm9,0x80(%rcx) */
-  0x66, 0x44, 0x0f, 0xd6, 0x91, 0x90, 0x00, 0x00, 0x00, /* movq   %xmm10,0x90(%rcx) */
-  0x66, 0x44, 0x0f, 0xd6, 0x99, 0xa0, 0x00, 0x00, 0x00, /* movq   %xmm11,0xa0(%rcx) */
-  0x66, 0x44, 0x0f, 0xd6, 0xa1, 0xb0, 0x00, 0x00, 0x00, /* movq   %xmm12,0xb0(%rcx) */
-  0x66, 0x44, 0x0f, 0xd6, 0xa9, 0xc0, 0x00, 0x00, 0x00, /* movq   %xmm13,0xc0(%rcx) */
-  0x66, 0x44, 0x0f, 0xd6, 0xb1, 0xd0, 0x00, 0x00, 0x00, /* movq   %xmm14,0xd0(%rcx) */
-  0x66, 0x44, 0x0f, 0xd6, 0xb9, 0xe0, 0x00, 0x00, 0x00, /* movq   %xmm15,0xe0(%rcx) */
-  0xf3, 0x44, 0x0f, 0x7e, 0xba, 0xe0, 0x00, 0x00, 0x00, /* movq   0xe0(%rdx),%xmm15 */
-  0xf3, 0x44, 0x0f, 0x7e, 0xb2, 0xd0, 0x00, 0x00, 0x00, /* movq   0xd0(%rdx),%xmm14 */
-  0xf3, 0x44, 0x0f, 0x7e, 0xaa, 0xc0, 0x00, 0x00, 0x00, /* movq   0xc0(%rdx),%xmm13 */
-  0xf3, 0x44, 0x0f, 0x7e, 0xa2, 0xb0, 0x00, 0x00, 0x00, /* movq   0xb0(%rdx),%xmm12 */
-  0xf3, 0x44, 0x0f, 0x7e, 0x9a, 0xa0, 0x00, 0x00, 0x00, /* movq   0xa0(%rdx),%xmm11 */
-  0xf3, 0x44, 0x0f, 0x7e, 0x92, 0x90, 0x00, 0x00, 0x00, /* movq   0x90(%rdx),%xmm10 */
-  0xf3, 0x44, 0x0f, 0x7e, 0x8a, 0x80, 0x00, 0x00, 0x00, /* movq   0x80(%rdx),%xmm9 */
-  0xf3, 0x44, 0x0f, 0x7e, 0x42, 0x70,                   /* movq   0x70(%rdx),%xmm8 */
-  0xf3, 0x0f, 0x7e, 0x7a, 0x60,                         /* movq   0x60(%rdx),%xmm7 */
-  0xf3, 0x0f, 0x7e, 0x72, 0x50,                         /* movq   0x50(%rdx),%xmm6 */
-  0x48, 0x8b, 0x72, 0x48,                               /* mov    0x48(%rdx),%rsi */
-  0x48, 0x8b, 0x7a, 0x40,                               /* mov    0x40(%rdx),%rdi */
-  0x4c, 0x8b, 0x7a, 0x38,                               /* mov    0x38(%rdx),%r15 */
-  0x4c, 0x8b, 0x72, 0x30,                               /* mov    0x30(%rdx),%r14 */
-  0x4c, 0x8b, 0x6a, 0x28,                               /* mov    0x28(%rdx),%r13 */
-  0x4c, 0x8b, 0x62, 0x20,                               /* mov    0x20(%rdx),%r12 */
-  0x48, 0x8b, 0x5a, 0x18,                               /* mov    0x18(%rdx),%rbx */
-  0x48, 0x8b, 0x6a, 0x10,                               /* mov    0x10(%rdx),%rbp */
-  0x48, 0x8b, 0x62, 0x08,                               /* mov    0x8(%rdx),%rsp */
-  0xff, 0x22,                                           /* jmpq   *(%rdx) */
-  0xc3,                                                 /* retq */
+  0x48, 0x8d, 0x05, 0x52, 0x01, 0x00, 0x00,               /* lea    0x152(%rip),%rax */
+  0x48, 0x89, 0x01,                                       /* mov    %rax,(%rcx) */
+  0x48, 0x89, 0x61, 0x08,                                 /* mov    %rsp,0x8(%rcx) */
+  0x48, 0x89, 0x69, 0x10,                                 /* mov    %rbp,0x10(%rcx) */
+  0x48, 0x89, 0x59, 0x18,                                 /* mov    %rbx,0x18(%rcx) */
+  0x4c, 0x89, 0x61, 0x20,                                 /* mov    %r12,0x20(%rcx) */
+  0x4c, 0x89, 0x69, 0x28,                                 /* mov    %r13,0x28(%rcx) */
+  0x4c, 0x89, 0x71, 0x30,                                 /* mov    %r14,0x30(%rcx) */
+  0x4c, 0x89, 0x79, 0x38,                                 /* mov    %r15,0x38(%rcx) */
+  0x48, 0x89, 0x79, 0x40,                                 /* mov    %rdi,0x40(%rcx) */
+  0x48, 0x89, 0x71, 0x48,                                 /* mov    %rsi,0x48(%rcx) */
+  0x66, 0x0f, 0xd6, 0x71, 0x50,                           /* movq   %xmm6,0x50(%rcx) */
+  0x66, 0x0f, 0xd6, 0x79, 0x60,                           /* movq   %xmm7,0x60(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0x41, 0x70,                     /* movq   %xmm8,0x70(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0x89, 0x80, 0x00, 0x00, 0x00,   /* movq   %xmm9,0x80(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0x91, 0x90, 0x00, 0x00, 0x00,   /* movq   %xmm10,0x90(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0x99, 0xa0, 0x00, 0x00, 0x00,   /* movq   %xmm11,0xa0(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0xa1, 0xb0, 0x00, 0x00, 0x00,   /* movq   %xmm12,0xb0(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0xa9, 0xc0, 0x00, 0x00, 0x00,   /* movq   %xmm13,0xc0(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0xb1, 0xd0, 0x00, 0x00, 0x00,   /* movq   %xmm14,0xd0(%rcx) */
+  0x66, 0x44, 0x0f, 0xd6, 0xb9, 0xe0, 0x00, 0x00, 0x00,   /* movq   %xmm15,0xe0(%rcx) */
+  0x65, 0x4c, 0x8b, 0x14, 0x25, 0x30, 0x00, 0x00, 0x00,   /* mov    %gs:0x30,%r10 */
+  0x49, 0x8b, 0x42, 0x20,                                 /* mov    0x20(%r10),%rax */
+  0x48, 0x89, 0x81, 0xf0, 0x00, 0x00, 0x00,               /* mov    %rax,0xf0(%rcx) */
+  0x49, 0x8b, 0x82, 0x78, 0x14, 0x00, 0x00,               /* mov    0x1478(%r10),%rax */
+  0x48, 0x89, 0x81, 0xf8, 0x00, 0x00, 0x00,               /* mov    %rax,0xf8(%rcx) */
+  0x49, 0x8b, 0x42, 0x10,                                 /* mov    0x10(%r10),%rax */
+  0x48, 0x89, 0x81, 0x00, 0x01, 0x00, 0x00,               /* mov    %rax,0x100(%rcx) */
+  0x49, 0x8b, 0x42, 0x08,                                 /* mov    0x8(%r10),%rax */
+  0x48, 0x89, 0x81, 0x08, 0x01, 0x00, 0x00,               /* mov    %rax,0x108(%rcx) */
+  0x48, 0x8b, 0x82, 0x08, 0x01, 0x00, 0x00,               /* mov    0x108(%rdx),%rax */
+  0x49, 0x89, 0x42, 0x08,                                 /* mov    %rax,0x8(%r10) */
+  0x48, 0x8b, 0x82, 0x00, 0x01, 0x00, 0x00,               /* mov    0x100(%rdx),%rax */
+  0x49, 0x89, 0x42, 0x10,                                 /* mov    %rax,0x10(%r10) */
+  0x48, 0x8b, 0x82, 0xf8, 0x00, 0x00, 0x00,               /* mov    0xf8(%rdx),%rax */
+  0x49, 0x89, 0x82, 0x78, 0x14, 0x00, 0x00,               /* mov    %rax,0x1478(%r10) */
+  0x48, 0x8b, 0x82, 0xf0, 0x00, 0x00, 0x00,               /* mov    0xf0(%rdx),%rax */
+  0x49, 0x89, 0x42, 0x20,                                 /* mov    %rax,0x20(%r10) */
+  0xf3, 0x44, 0x0f, 0x7e, 0xba, 0xe0, 0x00, 0x00, 0x00,   /* movq   0xe0(%rdx),%xmm15 */
+  0xf3, 0x44, 0x0f, 0x7e, 0xb2, 0xd0, 0x00, 0x00, 0x00,   /* movq   0xd0(%rdx),%xmm14 */
+  0xf3, 0x44, 0x0f, 0x7e, 0xaa, 0xc0, 0x00, 0x00, 0x00,   /* movq   0xc0(%rdx),%xmm13 */
+  0xf3, 0x44, 0x0f, 0x7e, 0xa2, 0xb0, 0x00, 0x00, 0x00,   /* movq   0xb0(%rdx),%xmm12 */
+  0xf3, 0x44, 0x0f, 0x7e, 0x9a, 0xa0, 0x00, 0x00, 0x00,   /* movq   0xa0(%rdx),%xmm11 */
+  0xf3, 0x44, 0x0f, 0x7e, 0x92, 0x90, 0x00, 0x00, 0x00,   /* movq   0x90(%rdx),%xmm10 */
+  0xf3, 0x44, 0x0f, 0x7e, 0x8a, 0x80, 0x00, 0x00, 0x00,   /* movq   0x80(%rdx),%xmm9 */
+  0xf3, 0x44, 0x0f, 0x7e, 0x42, 0x70,                     /* movq   0x70(%rdx),%xmm8 */
+  0xf3, 0x0f, 0x7e, 0x7a, 0x60,                           /* movq   0x60(%rdx),%xmm7 */
+  0xf3, 0x0f, 0x7e, 0x72, 0x50,                           /* movq   0x50(%rdx),%xmm6 */
+  0x48, 0x8b, 0x72, 0x48,                                 /* mov    0x48(%rdx),%rsi */
+  0x48, 0x8b, 0x7a, 0x40,                                 /* mov    0x40(%rdx),%rdi */
+  0x4c, 0x8b, 0x7a, 0x38,                                 /* mov    0x38(%rdx),%r15 */
+  0x4c, 0x8b, 0x72, 0x30,                                 /* mov    0x30(%rdx),%r14 */
+  0x4c, 0x8b, 0x6a, 0x28,                                 /* mov    0x28(%rdx),%r13 */
+  0x4c, 0x8b, 0x62, 0x20,                                 /* mov    0x20(%rdx),%r12 */
+  0x48, 0x8b, 0x5a, 0x18,                                 /* mov    0x18(%rdx),%rbx */
+  0x48, 0x8b, 0x6a, 0x10,                                 /* mov    0x10(%rdx),%rbp */
+  0x48, 0x8b, 0x62, 0x08,                                 /* mov    0x8(%rdx),%rsp */
+  0xff, 0x22,                                             /* jmpq   *(%rdx) */
+  0xc3,                                                   /* retq    */
+  0x90, 0x90, 0x90, 0x90, 0x90, 0x90,                     /* nop */
 };
 
 void (*_mco_wrap_main)(void) = (void(*)(void))(void*)_mco_wrap_main_code;
 void (*_mco_switch)(_mco_ctxbuf* from, _mco_ctxbuf* to) = (void(*)(_mco_ctxbuf* from, _mco_ctxbuf* to))(void*)_mco_switch_code;
 
-#else /* _WIN32 */
+static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
+  stack_size = stack_size - 32; /* Reserve 32 bytes for the shadow space. */
+  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - sizeof(size_t));
+  stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
+  ctx->buf[0] = (void*)(_mco_wrap_main);
+  ctx->buf[1] = (void*)(stack_high_ptr);
+  ctx->buf[4] = (void*)(_mco_main);
+  ctx->buf[5] = (void*)(co);
+  void* stack_top = (void*)((size_t)stack_base + stack_size);
+  ctx->stack_base = stack_top;
+  ctx->stack_limit = stack_base;
+  ctx->dealloc_stack = stack_base;
+  return MCO_SUCCESS;
+}
+
+#else /* not _WIN32 */
 
 typedef struct _mco_ctxbuf {
   void* buf[8]; /* rip, rsp, rbp, rbx, r12, r13, r14, r15 */
@@ -610,13 +656,9 @@ static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
     : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
 }
 
-#endif /* else _WIN32 */
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
-#ifndef _WIN32
-  /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */
-  stack_size = stack_size - 128;
-#endif
+  stack_size = stack_size - 128; /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */
   void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
   ctx->buf[0] = (void*)(_mco_wrap_main);
@@ -625,6 +667,8 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
   ctx->buf[5] = (void*)(co);
   return MCO_SUCCESS;
 }
+
+#endif /* not _WIN32 */
 
 #elif defined(__i386) || defined(__i386__)
 
@@ -886,7 +930,7 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   memset(storage, 0, desc->storage_size);
   /* Initialize stack. */
   void *stack_base = (void*)stack_addr;
-  size_t stack_size = co_addr + desc->coro_size - stack_addr;
+  size_t stack_size = desc->stack_size;
 #ifdef MCO_ZERO_MEMORY
   memset(stack_base, 0, stack_size);
 #endif

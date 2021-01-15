@@ -3,6 +3,7 @@ OUTEXT=
 CFLAGS=-Og -g -Wall -Wextra -std=c89 -I..
 RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
 # CFLAGS+=-m32
+# CFLAGS+=-DMCO_USE_FIBERS
 # CFLAGS+=-DMCO_USE_ASM
 # CFLAGS+=-DMCO_USE_UCONTEXT
 # CFLAGS+=-fsanitize=address

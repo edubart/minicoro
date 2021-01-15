@@ -22,11 +22,10 @@ The library assembly implementation is inspired by [Lua Coco](https://coco.luaji
 - Minimal, self contained and no external dependencies.
 - Readable sources and documented.
 - Implemented via assembly, ucontext or fibers.
-- Lightweight and efficient.
+- Lightweight and very efficient.
 - Works in most C89 compilers.
 - Error prone API, returning proper error codes on misuse.
-- Support running with valgrind.
-- Support running with ASan (AddressSanitizer) and TSan (ThreadSanitizer).
+- Support running with Valgrind, ASan (AddressSanitizer) and TSan (ThreadSanitizer).
 
 # Implementation details
 
@@ -34,17 +33,20 @@ Most platforms are supported through different methods.
 
 | Architecture | System      | Method    |
 |--------------|-------------|-----------|
-| x86_32       | (any OS)    | GCC asm   |
-| x86_64       | (any OS)    | GCC asm   |
-| ARM          | (any OS)    | GCC asm   |
-| ARM64        | (any OS)    | GCC asm   |
+| x86_32       | (any OS)    | assembly  |
+| x86_64       | (any OS)    | assembly  |
+| ARM          | (any OS)    | assembly  |
+| ARM64        | (any OS)    | assembly  |
 | (any CPU)    | (any OS)    | ucontext  |
+| x86_64       | Windows     | assembly  |
 | (any CPU)    | Windows     | fibers    |
-| x86_64       | Windows     | blob asm  |
 | WebAssembly  | Web         | fibers    |
 
-The ucontext method is used as a fallback if the compiler or CPU does not support GCC inline assembly.
-The fibers method is the default on Windows, to use the assembly method you have to explicitly enable it.
+The assembly method is used by default if supported by the compiler and CPU,
+otherwise ucontext or fiber method is used as a fallback.
+
+The assembly method is very efficient, it just take a few cycles
+to create, resume, yield or destroy a coroutine.
 
 # Caveats
 
@@ -314,6 +316,7 @@ int main() {
 
 # Updates
 
+- **15-Jan-2021**: Make assembly method the default one on Windows x86_64.
 - **14-Jan-2021**: Add support for running with ASan (AddressSanitizer) and TSan (ThreadSanitizer).
 - **13-Jan-2021**: Add support for ARM and WebAssembly. Add Public Domain and MIT No Attribution license.
 - **12-Jan-2021**: Some API changes and improvements.
