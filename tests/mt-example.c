@@ -7,7 +7,7 @@
 #define NUM_THREADS 4
 #define NUM_TASKS 100
 #define NUM_ITERATIONS 500
-#define EXPECTED_RESULT 315178285
+#define EXPECTED_RESULT 2396583362
 
 static c89mtx_t mutex;
 static c89thrd_t threads[NUM_THREADS];
@@ -29,7 +29,6 @@ static void fibonacci_task(mco_coro* co) {
 
   for(unsigned int i=0;i<NUM_ITERATIONS;++i) {
     /* Yield the next Fibonacci number. */
-    mco_set_storage(co, &m, sizeof(m));
     mco_result res = mco_yield(co);
     if(res != MCO_SUCCESS)
       fail_mco("Failed to yield coroutine", res);
@@ -38,6 +37,9 @@ static void fibonacci_task(mco_coro* co) {
     m = n;
     n = tmp;
   }
+
+  /* Yield the last Fibonacci number. */
+  mco_push(co, &m, sizeof(m));
 }
 
 static mco_coro* create_fibonacci_task() {
@@ -94,7 +96,7 @@ int thread_worker(void* data) {
       case MCO_DEAD: { /* Task finished. */
         /* Retrieve storage set in last coroutine yield. */
         unsigned int ret = 0;
-        res = mco_get_storage(task, &ret, sizeof(ret));
+        res = mco_pop(task, &ret, sizeof(ret));
         if(res != MCO_SUCCESS)
           fail_mco("Failed to retrieve coroutine storage", res);
         /* Check task result. */

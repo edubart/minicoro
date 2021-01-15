@@ -82,8 +82,9 @@ To associate a persistent value with the coroutine,
 you can  optionally set `user_data` on its creation and later retrieve with `mco_get_user_data`.
 
 To pass values between resume and yield,
-you can optionally use `mco_set_storage` and `mco_get_storage` APIs,
-they are intended to pass temporary values.
+you can optionally use `mco_push` and `mco_pop` APIs,
+they are intended to pass temporary values using a FIFO (First In, First Out) style buffer.
+The storage system can also be used to send and receive initial values on coroutine creation or before it finishes.
 
 # Usage
 
@@ -154,8 +155,10 @@ to this just use `mco_yield(mco_running())`.
 
 The library has the storage interface to assist passing data between yield and resume.
 It's usage is straightforward,
-use `mco_set_storage` to send data before a `mco_resume` or `mco_yield`,
-then later use `mco_get_storage` after a `mco_resume` or `mco_yield` to receive data.
+use `mco_push` to send data before a `mco_resume` or `mco_yield`,
+then later use `mco_pop` after a `mco_resume` or `mco_yield` to receive data.
+Take care to not mismatch a push and pop, otherwise these functions will return
+an error.
 
 ## Error handling
 
@@ -176,7 +179,7 @@ The following can be defined to change the library behavior:
 - `MCO_NO_DEBUG`              - Disable debug mode.
 - `MCO_NO_MULTITHREAD`        - Disable multithread usage. Multithread is supported when `thread_local` is supported.
 - `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
-- `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding storage, intended for garbage collected environments.
+- `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when poping storage, intended for garbage collected environments.
 - `MCO_USE_ASM`               - Force use of assembly context switch implementation.
 - `MCO_USE_UCONTEXT`          - Force use of ucontext context switch implementation.
 - `MCO_USE_FIBERS`            - Force use of fibers context switch implementation.
@@ -189,10 +192,10 @@ for context switch (triggered in resume or yield) and initialization.
 
 | CPU Arch | OS       | Method   | Context switch | Initialize   | Uninitialize |
 |----------|----------|----------|----------------|--------------|--------------|
-| x86_64   | Linux    | GCC asm  | 9 cycles       | 31 cycles    | 14 cycles    |
+| x86_64   | Linux    | assembly | 9 cycles       | 31 cycles    | 14 cycles    |
 | x86_64   | Linux    | ucontext | 352 cycles     | 383 cycles   | 14 cycles    |
 | x86_64   | Windows  | fibers   | 69 cycles      | 10564 cycles | 11167 cycles |
-| x86_64   | Windows  | blob asm | 31 cycles      | 74 cycles    | 14 cycles    |
+| x86_64   | Windows  | assembly | 33 cycles      | 74 cycles    | 14 cycles    |
 
 _NOTE_: Tested on Intel Core i7-8750H CPU @ 2.20GHz with pre allocated coroutines.
 
@@ -227,12 +230,11 @@ mco_state mco_status(mco_coro* co);                                     /* Retur
 void* mco_get_user_data(mco_coro* co);                                  /* Get coroutine user data supplied on coroutine creation. */
 
 /* Storage interface functions, used to pass values between yield and resume. */
-mco_result mco_set_storage(mco_coro* co, const void* src, size_t len);  /* Set the coroutine storage. Use to send values between yield and resume. */
-mco_result mco_reset_storage(mco_coro* co);                             /* Clear the coroutine storage. Call this to reset storage before a yield or resume. */
-mco_result mco_get_storage(mco_coro* co, void* dest, size_t len);       /* Get the coroutine storage. Use to receive values between yield and resume. */
-size_t mco_get_storage_available_size(mco_coro* co);                    /* Get the available storage size to retrieve with `mco_get_storage`. */
-size_t mco_get_storage_size(mco_coro* co);                              /* Get the coroutine storage size. */
-void* mco_get_storage_pointer(mco_coro* co);                            /* Get the coroutine storage pointer. Use only if you do not wish to use the set/get methods. */
+mco_result mco_push(mco_coro* co, const void* src, size_t len); /* Push bytes to the coroutine storage. Use to send values between yield and resume. */
+mco_result mco_pop(mco_coro* co, void* dest, size_t len);       /* Pop bytes from the coroutine storage. Use to get values between yield and resume. */
+mco_result mco_peek(mco_coro* co, void* dest, size_t len);      /* Like `mco_pop` but it does not consumes the storage. */
+size_t mco_get_bytes_stored(mco_coro* co);                      /* Get the available bytes that can be retrieved with a `mco_pop`. */
+size_t mco_get_storage_size(mco_coro* co);                      /* Get the total storage size. */
 
 /* Misc functions. */
 mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
@@ -259,13 +261,13 @@ static void fibonacci_coro(mco_coro* co) {
 
   /* Retrieve max value. */
   unsigned long max;
-  mco_result res = mco_get_storage(co, &max, sizeof(max));
+  mco_result res = mco_pop(co, &max, sizeof(max));
   if(res != MCO_SUCCESS)
     fail("Failed to retrieve coroutine storage", res);
 
   while(1) {
     /* Yield the next Fibonacci number. */
-    mco_set_storage(co, &m, sizeof(m));
+    mco_push(co, &m, sizeof(m));
     res = mco_yield(co);
     if(res != MCO_SUCCESS)
       fail("Failed to yield coroutine", res);
@@ -276,6 +278,9 @@ static void fibonacci_coro(mco_coro* co) {
     if(m >= max)
       break;
   }
+
+  /* Yield the last Fibonacci number. */
+  mco_push(co, &m, sizeof(m));
 }
 
 int main() {
@@ -288,7 +293,7 @@ int main() {
 
   /* Set storage. */
   unsigned long max = 1000000000;
-  mco_set_storage(co, &max, sizeof(max));
+  mco_push(co, &max, sizeof(max));
 
   int counter = 1;
   while(mco_status(co) == MCO_SUSPENDED) {
@@ -299,7 +304,7 @@ int main() {
 
     /* Retrieve storage set in last coroutine yield. */
     unsigned long ret = 0;
-    res = mco_get_storage(co, &ret, sizeof(ret));
+    res = mco_pop(co, &ret, sizeof(ret));
     if(res != MCO_SUCCESS)
       fail("Failed to retrieve coroutine storage", res);
     printf("fib %d = %lu\n", counter, ret);
@@ -316,7 +321,7 @@ int main() {
 
 # Updates
 
-- **15-Jan-2021**: Make assembly method the default one on Windows x86_64.
+- **15-Jan-2021**: Make assembly method the default one on Windows x86_64. Redesigned the storage API, thanks @RandyGaul for the suggestion.
 - **14-Jan-2021**: Add support for running with ASan (AddressSanitizer) and TSan (ThreadSanitizer).
 - **13-Jan-2021**: Add support for ARM and WebAssembly. Add Public Domain and MIT No Attribution license.
 - **12-Jan-2021**: Some API changes and improvements.

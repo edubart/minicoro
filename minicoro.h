@@ -81,8 +81,9 @@ To associate a persistent value with the coroutine,
 you can  optionally set `user_data` on its creation and later retrieve with `mco_get_user_data`.
 
 To pass values between resume and yield,
-you can optionally use `mco_set_storage` and `mco_get_storage` APIs,
-they are intended to pass temporary values.
+you can optionally use `mco_push` and `mco_pop` APIs,
+they are intended to pass temporary values using a FIFO style buffer.
+The storage system can also be used to send and receive initial values on coroutine creation or before it finishes.
 
 # Usage
 
@@ -114,8 +115,8 @@ void coro_entry(mco_coro* co) {
 int main() {
   // First initialize a `desc` object through `mco_desc_init`.
   mco_desc desc = mco_desc_init(coro_entry, 0);
-  // Configure `desc` fields when needed (e.g. customize user_data, stack_size or allocation functions).
-  desc.stack_size = 32768;
+  // Configure `desc` fields when needed (e.g. customize user_data or allocation functions).
+  desc.user_data = NULL;
   // Call `mco_create` with the output coroutine pointer and `desc` pointer.
   mco_coro* co;
   mco_result res = mco_create(&co, &desc);
@@ -153,8 +154,10 @@ to this just use `mco_yield(mco_running())`.
 
 The library has the storage interface to assist passing data between yield and resume.
 It's usage is straightforward,
-use `mco_set_storage` to send data before a `mco_resume` or `mco_yield`,
-then later use `mco_get_storage` after a `mco_resume` or `mco_yield` to receive data.
+use `mco_push` to send data before a `mco_resume` or `mco_yield`,
+then later use `mco_pop` after a `mco_resume` or `mco_yield` to receive data.
+Take care to not mismatch a push and pop, otherwise these functions will return
+an error.
 
 ## Error handling
 
@@ -175,7 +178,7 @@ The following can be defined to change the library behavior:
 - `MCO_NO_DEBUG`              - Disable debug mode.
 - `MCO_NO_MULTITHREAD`        - Disable multithread usage. Multithread is supported when `thread_local` is supported.
 - `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
-- `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when discarding storage, intended for garbage collected environments.
+- `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when poping storage, intended for garbage collected environments.
 - `MCO_USE_ASM`               - Force use of assembly context switch implementation.
 - `MCO_USE_UCONTEXT`          - Force use of ucontext context switch implementation.
 - `MCO_USE_FIBERS`            - Force use of fibers context switch implementation.
@@ -245,7 +248,7 @@ struct mco_coro {
   void* stack_base; /* Stack base address, can be used to scan memory in a garbage collector. */
   size_t stack_size;
   unsigned char* storage;
-  size_t storage_available_size;
+  size_t bytes_stored;
   size_t storage_size;
   void* asan_prev_stack; /* Used by address sanitizer. */
   void* tsan_prev_fiber; /* Used by thread sanitizer. */
@@ -278,12 +281,11 @@ MCO_API mco_state mco_status(mco_coro* co);                                     
 MCO_API void* mco_get_user_data(mco_coro* co);                                  /* Get coroutine user data supplied on coroutine creation. */
 
 /* Storage interface functions, used to pass values between yield and resume. */
-MCO_API mco_result mco_set_storage(mco_coro* co, const void* src, size_t len);  /* Set the coroutine storage. Use to send values between yield and resume. */
-MCO_API mco_result mco_reset_storage(mco_coro* co);                             /* Clear the coroutine storage. Call this to reset storage before a yield or resume. */
-MCO_API mco_result mco_get_storage(mco_coro* co, void* dest, size_t len);       /* Get the coroutine storage. Use to receive values between yield and resume. */
-MCO_API size_t mco_get_storage_available_size(mco_coro* co);                    /* Get the available storage size to retrieve with `mco_get_storage`. */
-MCO_API size_t mco_get_storage_size(mco_coro* co);                              /* Get the coroutine storage size. */
-MCO_API void* mco_get_storage_pointer(mco_coro* co);                            /* Get the coroutine storage pointer. Use only if you do not wish to use the set/get methods. */
+MCO_API mco_result mco_push(mco_coro* co, const void* src, size_t len); /* Push bytes to the coroutine storage. Use to send values between yield and resume. */
+MCO_API mco_result mco_pop(mco_coro* co, void* dest, size_t len);       /* Pop bytes from the coroutine storage. Use to get values between yield and resume. */
+MCO_API mco_result mco_peek(mco_coro* co, void* dest, size_t len);      /* Like `mco_pop` but it does not consumes the storage. */
+MCO_API size_t mco_get_bytes_stored(mco_coro* co);                      /* Get the available bytes that can be retrieved with a `mco_pop`. */
+MCO_API size_t mco_get_storage_size(mco_coro* co);                      /* Get the total storage size. */
 
 /* Misc functions. */
 MCO_API mco_coro* mco_running(void);                        /* Returns the running coroutine for the current thread. */
@@ -1146,8 +1148,8 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
 }
 
 static void _mco_destroy_context(mco_coro* co) {
-  _mco_context* context = (_mco_context*)co->context;
   /* Nothing to do. */
+  _MCO_UNUSED(co);
 }
 
 static MCO_FORCE_INLINE void _mco_init_desc_sizes(mco_desc* desc, size_t stack_size) {
@@ -1349,58 +1351,71 @@ void* mco_get_user_data(mco_coro* co) {
   return NULL;
 }
 
-mco_result mco_set_storage(mco_coro* co, const void* src, size_t len) {
+mco_result mco_push(mco_coro* co, const void* src, size_t len) {
   if(!co) {
     MCO_LOG("attempt to use an invalid coroutine");
     return MCO_INVALID_COROUTINE;
   } else if(len > 0) {
-    if(len > co->storage_size) {
-      MCO_LOG("attempt to set storage from a buffer that is too large");
+    size_t bytes_stored = co->bytes_stored + len;
+    if(bytes_stored > co->storage_size) {
+      MCO_LOG("attempt to push bytes too many bytes into coroutine storage");
       return MCO_NOT_ENOUGH_SPACE;
     }
     if(!src) {
-      MCO_LOG("attempt to set storage from an invalid pointer");
+      MCO_LOG("attempt push a null pointer into coroutine storage");
       return MCO_INVALID_POINTER;
     }
-    memcpy(&co->storage[0], src, len);
+    memcpy(&co->storage[co->bytes_stored], src, len);
+    co->bytes_stored = bytes_stored;
   }
-#ifdef MCO_ZERO_MEMORY
-  if(co->storage_available_size > len) {
-    /* Clear garbage in old storage. */
-    memset(&co->storage[len], 0, co->storage_available_size - len);
-  }
-#endif
-  co->storage_available_size = len;
   return MCO_SUCCESS;
 }
 
-mco_result mco_get_storage(mco_coro* co, void* dest, size_t len) {
+mco_result mco_pop(mco_coro* co, void* dest, size_t len) {
   if(!co) {
     MCO_LOG("attempt to use an invalid coroutine");
     return MCO_INVALID_COROUTINE;
   } else if(len > 0) {
-    if(len > co->storage_size) {
-      MCO_LOG("attempt to get storage into a buffer that is too large");
+    if(len > co->bytes_stored) {
+      MCO_LOG("attempt to pop too many bytes from coroutine storage");
       return MCO_NOT_ENOUGH_SPACE;
     }
-    if(!dest) {
-      MCO_LOG("attempt to get storage into an invalid pointer");
-      return MCO_INVALID_POINTER;
+    size_t bytes_stored = co->bytes_stored - len;
+    if(dest) {
+      memcpy(dest, &co->storage[bytes_stored], len);
     }
-    if(len != co->storage_available_size) {
-      MCO_LOG("attempt to get storage of size that mismatches last set size");
-      return MCO_NOT_ENOUGH_SPACE;
-    }
-    memcpy(dest, &co->storage[0], len);
+    co->bytes_stored = bytes_stored;
+#ifdef MCO_ZERO_MEMORY
+    /* Clear garbage in the discarded storage. */
+    memset(&co->storage[bytes_stored], 0, len);
+#endif
   }
   return MCO_SUCCESS;
 }
 
-size_t mco_get_storage_available_size(mco_coro* co) {
+mco_result mco_peek(mco_coro* co, void* dest, size_t len) {
+  if(!co) {
+    MCO_LOG("attempt to use an invalid coroutine");
+    return MCO_INVALID_COROUTINE;
+  } else if(len > 0) {
+    if(len > co->bytes_stored) {
+      MCO_LOG("attempt to peek too many bytes from coroutine storage");
+      return MCO_NOT_ENOUGH_SPACE;
+    }
+    if(!dest) {
+      MCO_LOG("attempt peek into a null pointer");
+      return MCO_INVALID_POINTER;
+    }
+    memcpy(dest, &co->storage[co->bytes_stored - len], len);
+  }
+  return MCO_SUCCESS;
+}
+
+size_t mco_get_bytes_stored(mco_coro* co) {
   if(co == NULL) {
     return 0;
   }
-  return co->storage_available_size;
+  return co->bytes_stored;
 }
 
 size_t mco_get_storage_size(mco_coro* co) {
@@ -1408,17 +1423,6 @@ size_t mco_get_storage_size(mco_coro* co) {
     return 0;
   }
   return co->storage_size;
-}
-
-void* mco_get_storage_pointer(mco_coro* co) {
-  if(!co) {
-    return NULL;
-  }
-  return co->storage;
-}
-
-mco_result mco_reset_storage(mco_coro* co) {
-  return mco_set_storage(co, NULL, 0);
 }
 
 #ifdef MCO_NO_MULTITHREAD
