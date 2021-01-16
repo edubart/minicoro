@@ -326,7 +326,10 @@ extern "C" {
   #elif defined(__EMSCRIPTEN__)
     #define MCO_USE_FIBERS
   #else
-    #if __GNUC__ >= 3 /* Assembly extension supported. */
+    #if defined(__APPLE__)
+      #define MCO_USE_UCONTEXT
+      #define _XOPEN_SOURCE // ucontext is deprecated on Apple, but is a valid fallback.
+    #elif __GNUC__ >= 3 /* Assembly extension supported. */
       #if defined(__x86_64__) || defined(__i386) || defined(__i386__) || defined(__ARM_EABI__) || defined(__aarch64__)
         #define MCO_USE_ASM
       #else
