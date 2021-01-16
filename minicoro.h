@@ -631,8 +631,9 @@ typedef struct _mco_ctxbuf {
 static void _mco_wrap_main(void) {
   __asm__ __volatile__ (
     "movq %r13, %rdi\n\t"
-    "push %rbp\n\t"
-    "mov %rsp, %rbp\n\t"
+#if defined(__APPLE__)
+    "sub $8, %rsp\n\t"
+#endif
     "jmpq *%r12");
 }
 
