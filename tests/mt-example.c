@@ -1,7 +1,9 @@
 #define MINICORO_IMPL
 #include "minicoro.h"
-#define C89THREAD_IMPLEMENTATION
-#include "thirdparty/c89thread.h"
+
+#define CUTE_SYNC_IMPLEMENTATION
+#define CUTE_SYNC_POSIX
+#include "thirdparty/cute_sync.h"
 #include <stdio.h>
 
 #define NUM_THREADS 4
@@ -9,8 +11,8 @@
 #define NUM_ITERATIONS 500
 #define EXPECTED_RESULT 2396583362
 
-static c89mtx_t mutex;
-static c89thrd_t threads[NUM_THREADS];
+static cute_mutex_t mutex;
+static cute_thread_t* threads[NUM_THREADS];
 static mco_coro* tasks[NUM_TASKS];
 
 static void fail_mco(const char* message, mco_result res) {
@@ -61,7 +63,7 @@ int thread_worker(void* data) {
     mco_coro* task = NULL;
     int task_id = 0;
 
-    if(c89mtx_lock(&mutex) != c89thrd_success)
+    if(!cute_lock(&mutex))
       fail("Unable to lock mutex");
     for(int i=0;i<NUM_TASKS;++i) {
       if(tasks[i] != NULL) {
@@ -71,7 +73,7 @@ int thread_worker(void* data) {
         break;
       }
     }
-    if(c89mtx_unlock(&mutex) != c89thrd_success)
+    if(!cute_unlock(&mutex))
       fail("Unable to unlock mutex");
 
     if(!task) {
@@ -86,10 +88,10 @@ int thread_worker(void* data) {
     switch(mco_status(task)) {
       case MCO_SUSPENDED: { /* Task is not finished yet. */
         /* Add it back to task list. */
-        if(c89mtx_lock(&mutex) != c89thrd_success)
+        if(!cute_lock(&mutex))
           fail("Unable to lock mutex");
         tasks[task_id] = task;
-        if(c89mtx_unlock(&mutex) != c89thrd_success)
+        if(!cute_unlock(&mutex))
           fail("Unable to unlock mutex");
         break;
       }
@@ -121,8 +123,7 @@ int thread_worker(void* data) {
 
 int main() {
   /* Initialize mutex. */
-  if(c89mtx_init(&mutex, c89mtx_plain) != c89thrd_success)
-    fail("Failed to create mutex");
+  mutex = cute_mutex_create();
 
   /* Create coroutine tasks. */
   for(int i=0;i<NUM_TASKS;++i) {
@@ -131,13 +132,14 @@ int main() {
 
   /* Create thread workers. */
   for(size_t i=0;i<NUM_THREADS;++i) {
-    if(c89thrd_create(&threads[i], thread_worker, NULL) != c89thrd_success)
+    threads[i] = cute_thread_create(thread_worker, NULL, NULL);
+    if (!threads[i])
       fail("Failed to create a thread");
   }
 
   /* Wait all threads to finish. */
   for(size_t i=0;i<NUM_THREADS;++i) {
-    if(c89thrd_join(threads[i], NULL) != c89thrd_success)
+    if(!cute_thread_wait(threads[i]))
       fail("Failed to join a thread!");
   }
 
@@ -147,7 +149,7 @@ int main() {
   }
 
   /* Destroy mutex. */
-  c89mtx_destroy(&mutex);
+  cute_mutex_destroy(&mutex);
 
   printf("Multithread test succeeded!\n");
   return 0;
