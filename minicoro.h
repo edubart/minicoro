@@ -326,10 +326,7 @@ extern "C" {
   #elif defined(__EMSCRIPTEN__)
     #define MCO_USE_FIBERS
   #else
-    #if defined(__APPLE__)
-      #define MCO_USE_UCONTEXT
-      #define _XOPEN_SOURCE // ucontext is deprecated on Apple, but is a valid fallback.
-    #elif __GNUC__ >= 3 /* Assembly extension supported. */
+    #if __GNUC__ >= 3 /* Assembly extension supported. */
       #if defined(__x86_64__) || defined(__i386) || defined(__i386__) || defined(__ARM_EABI__) || defined(__aarch64__)
         #define MCO_USE_ASM
       #else
@@ -634,6 +631,8 @@ typedef struct _mco_ctxbuf {
 static void _mco_wrap_main(void) {
   __asm__ __volatile__ (
     "movq %r13, %rdi\n\t"
+    "push %rbp\n\t"
+    "mov %rsp, %rbp\n\t"
     "jmpq *%r12");
 }
 
@@ -660,7 +659,6 @@ static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
     : "+S" (from), "+D" (to) :
     : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
 }
-
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
   stack_size = stack_size - 128; /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */

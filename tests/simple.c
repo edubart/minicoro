@@ -1,6 +1,7 @@
 #define MINICORO_IMPL
 #include "minicoro.h"
 #include <stdio.h>
+#include <assert.h>
 
 // Coroutine entry function.
 void coro_entry(mco_coro* co) {
