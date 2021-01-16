@@ -26,20 +26,17 @@ The API is inspired by Lua coroutines but with C use in mind.
 - Error prone API, returning proper error codes on misuse.
 - Support running with Valgrind, ASan (AddressSanitizer) and TSan (ThreadSanitizer).
 
-# Implementation details
+# Supported Platforms
 
-Most platforms are supported through different methods.
+Most platforms are supported through different methods:
 
-| Architecture | System      | Method    |
-|--------------|-------------|-----------|
-| x86_32       | (any OS)    | assembly  |
-| x86_64       | (any OS)    | assembly  |
-| ARM          | (any OS)    | assembly  |
-| ARM64        | (any OS)    | assembly  |
-| (any CPU)    | (any OS)    | ucontext  |
-| x86_64       | Windows     | assembly  |
-| (any CPU)    | Windows     | fibers    |
-| WebAssembly  | Web         | fibers    |
+| Platform     | Assembly Method  | Fallback Method   |
+|--------------|------------------|-------------------|
+| Android      | ARM/ARM64        | N/A               |
+| Windows      | x86_64           | fibers            |
+| Linux        | x86_64/i686      | ucontext          |
+| Mac OS X     | x86_64           | ucontext          |
+| Browser      | N/A              | emscripten fibers |
 
 The assembly method is used by default if supported by the compiler and CPU,
 otherwise ucontext or fiber method is used as a fallback.
@@ -55,7 +52,6 @@ to create, resume, yield or destroy a coroutine.
 - Some unsupported sanitizers for C may trigger false warnings when using coroutines.
 - The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
 - Take care to not cause stack overflows, otherwise your program may crash or not, the behavior is undefined.
-- Some older operating systems may have defective ucontext implementations because this feature is not widely used, upgrade your OS.
 - On WebAssembly you must compile with emscripten flag `-s ASYNCIFY=1`.
 
 # Introduction
@@ -689,6 +685,9 @@ static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
   stack_size = stack_size - 128; /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */
+#ifdef __APPLE__
+  stack_size = stack_size - 8; /* MacOS X needs the stack pointer to be ESP mod 16 = 8 aligned. */
+#endif
   void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
   ctx->buf[0] = (void*)(_mco_wrap_main);
