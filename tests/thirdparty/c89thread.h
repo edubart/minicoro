@@ -25,8 +25,12 @@ The API should be compatible with the main C11 API, but all APIs have been names
 
 In addition to types defined by the C11 standard, c89thread also implements the following primitives:
 
-    * Semaphores (`c89sem_t`)
-    * Events (`c89evnt_t`)
+    +----------------+-------------+
+    | c89thread Type | Description |
+    +----------------+-------------+
+    | c89sem_t       | Semaphore   |
+    | c89evnt_t      | Event       |
+    +----------------+-------------+
 
 The C11 threading library uses the timespec function for specifying times, however this is not well
 supported on older compilers. Therefore, c89thread implements some helper functions for working with
@@ -84,6 +88,35 @@ typedef void* c89thread_handle;
     #ifndef C89THREAD_USE_PTHREAD
     #define C89THREAD_USE_PTHREAD
     #endif
+
+    /*
+    This is, hopefully, a temporary measure to get compilation working with the -std=c89 switch on
+    GCC and Clang. Unfortunately without this we get errors about the following functions not being
+    declared:
+
+        pthread_mutexattr_settype()
+
+    I am not sure yet how a fallback would work for pthread_mutexattr_settype(). It may just be
+    that it's fundamentally not compatible without explicit pthread support which would make the
+    _XOPEN_SOURCE define mandatory. Needs further investigation.
+
+    In addition, pthread_mutex_timedlock() is only available since 2001 which is only enabled if
+    _XOPEN_SOURCE is defined to something >= 600. If this is not the case, a suboptimal fallback
+    will be used instead which calls pthread_mutex_trylock() in a loop, with a sleep after each
+    loop iteration. By setting _XOPEN_SOURCE here we reduce the likelyhood of users accidentally
+    falling back to the suboptimal fallback.
+
+    I'm setting this to the latest version here (700) just in case this file is included at the top
+    of a source file which later on depends on some POSIX functions from later revisions.
+    */
+    #ifndef _XOPEN_SOURCE
+    #define _XOPEN_SOURCE   700
+    #else
+        #if _XOPEN_SOURCE < 500
+        #error _XOPEN_SOURCE must be >= 500. c89thread is not usable.
+        #endif
+    #endif
+
     #include <pthread.h>
 #endif
 
@@ -148,6 +181,7 @@ void c89thrd_yield(void);
 void c89thrd_exit(int res);
 int c89thrd_detach(c89thrd_t thr);
 int c89thrd_join(c89thrd_t thr, int* res);
+
 
 /* mtx_t */
 #if defined(C89THREAD_WIN32)
@@ -231,12 +265,14 @@ int c89evnt_signal(c89evnt_t* evnt);
 
 
 /* Timing Helpers */
-void c89timespec_get(struct timespec* ts, int base);
+int c89timespec_get(struct timespec* ts, int base);
 struct timespec c89timespec_now();
+struct timespec c89timespec_nanoseconds(time_t nanoseconds);
 struct timespec c89timespec_milliseconds(time_t milliseconds);
 struct timespec c89timespec_seconds(time_t seconds);
 struct timespec c89timespec_diff(struct timespec lhs, struct timespec rhs);
 struct timespec c89timespec_add(struct timespec tsA, struct timespec tsB);
+int c89timespec_cmp(struct timespec tsA, struct timespec tsB);
 
 /* Thread Helpers. */
 int c89thrd_sleep_timespec(struct timespec ts);
@@ -341,7 +377,7 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
         return c89thrd_error;
     }
 
-    pData = c89thread_malloc(sizeof(*pData), c89thread_allocation_type_general, pAllocationCallbacks);   /* <-- This will be freed when c89thrd_start_win32() is entered. */
+    pData = (c89thrd_start_data_win32*)c89thread_malloc(sizeof(*pData), c89thread_allocation_type_general, pAllocationCallbacks);   /* <-- This will be freed when c89thrd_start_win32() is entered. */
     if (pData == NULL) {
         return c89thrd_nomem;
     }
@@ -930,6 +966,7 @@ int c89evnt_signal(c89evnt_t* evnt)
 #if defined(C89THREAD_POSIX)
 #include <stdlib.h> /* For malloc(), free(). */
 #include <errno.h>  /* For errno_t. */
+#include <sys/time.h>   /* For timeval. */
 
 #ifndef C89THREAD_MALLOC
 #define C89THREAD_MALLOC(sz)    malloc(sz)
@@ -995,7 +1032,7 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
         return c89thrd_error;
     }
 
-    pData = c89thread_malloc(sizeof(*pData), c89thread_allocation_type_general, pAllocationCallbacks);   /* <-- This will be freed when c89thrd_start_posix() is entered. */
+    pData = (c89thrd_start_data_posix*)c89thread_malloc(sizeof(*pData), c89thread_allocation_type_general, pAllocationCallbacks);   /* <-- This will be freed when c89thrd_start_posix() is entered. */
     if (pData == NULL) {
         return c89thrd_nomem;
     }
@@ -1042,10 +1079,14 @@ c89thrd_t c89thrd_current(void)
 int c89thrd_sleep(const struct timespec* duration, struct timespec* remaining)
 {
     /*
-    The documentation for thrd_sleep() mentions nanosleep(), so we'll go ahead and use that. We need
-    to keep in mind the requirement to handle signal interrupts.
+    The documentation for thrd_sleep() mentions nanosleep(), so we'll go ahead and use that if it's
+    available. Otherwise we'll fallback to select() and use a similar algorithm to what we use with
+    the Windows build. We need to keep in mind the requirement to handle signal interrupts.
     */
-    int result = nanosleep(duration, remaining);
+    int result;
+
+#if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 199309L
+    result = nanosleep(duration, remaining);
     if (result != 0) {
         if (result == EINTR) {
             return c89thrd_signal;
@@ -1053,6 +1094,72 @@ int c89thrd_sleep(const struct timespec* duration, struct timespec* remaining)
 
         return c89thrd_error;
     }
+#else
+    /*
+    We need to fall back to select(). We'll use c89timespec_get() to retrieve the time before and after
+    for the purpose of diffing.
+    */
+    struct timeval tv;
+    struct timespec tsBeg;
+    struct timespec tsEnd;
+
+    if (duration == NULL) {
+        return c89thrd_error;
+    }
+
+    /*
+    We need to grab the time before the wait. This will be diff'd with the time after waiting to
+    produce the remaining amount.
+    */
+    if (remaining != NULL) {
+        result = c89timespec_get(&tsBeg, TIME_UTC);
+        if (result == 0) {
+            return c89thrd_error;   /* Failed to retrieve the start time. */
+        }
+    }
+
+    tv.tv_sec  = duration->tv_sec;
+    tv.tv_usec = duration->tv_nsec / 1000;
+
+    /*
+    We need to sleep for the *minimum* of `duration`. Our nanoseconds-to-microseconds conversion
+    above may have truncated some nanoseconds, so we'll need to add a microsecond to compensate.
+    */
+    if ((duration->tv_nsec % 1000) != 0) {
+        tv.tv_usec += 1;
+        if (tv.tv_usec > 1000000) {
+            tv.tv_usec = 0;
+            tv.tv_sec += 1;
+        }
+    }
+
+    result = select(0, NULL, NULL, NULL, &tv);
+    if (result == 0) {
+        if (remaining != NULL) {
+            remaining->tv_sec  = 0;
+            remaining->tv_nsec = 0;
+        }
+
+        return c89thrd_success;
+    }
+
+    /* Getting here means didn't wait the whole time. We'll need to grab the diff. */
+    if (remaining != NULL) {
+        if (c89timespec_get(&tsEnd, TIME_UTC) != 0) {
+            *remaining = c89timespec_diff(tsEnd, tsBeg);
+        } else {
+            /* Failed to get the end time, somehow. Shouldn't ever happen. */
+            remaining->tv_sec  = 0;
+            remaining->tv_nsec = 0;
+        }
+    }
+
+    if (result == EINTR) {
+        return c89thrd_signal;
+    } else {
+        return c89thrd_error;
+    }
+#endif
 
     return c89thrd_success;
 }
@@ -1150,6 +1257,62 @@ int c89mtx_lock(c89mtx_t* mutex)
     return c89thrd_success;
 }
 
+
+/* I'm not entirely sure what the best wait time would be, so making it configurable. Defaulting to 1 microsecond. */
+#ifndef C89THREAD_TIMEDLOCK_WAIT_TIME_IN_NANOSECONDS
+#define C89THREAD_TIMEDLOCK_WAIT_TIME_IN_NANOSECONDS    1000
+#endif
+
+static int c89pthread_mutex_timedlock(pthread_mutex_t* mutex, const struct timespec* time_point)
+{
+#if defined(__USE_XOPEN2K) && !defined(__APPLE__)
+    return pthread_mutex_timedlock(mutex, time_point);
+#else
+    /*
+    Fallback implementation for when pthread_mutex_timedlock() is not avaialble. This is just a
+    naive loop which waits a bit of time before continuing.
+    */
+    #if !defined(C89ATOMIC_SUPPRESS_FALLBACK_WARNING) && !defined(__APPLE__)
+        #warning pthread_mutex_timedlock() is unavailable. Falling back to a suboptimal implementation. Set _XOPEN_SOURCE to >= 600 to use the native implementation of pthread_mutex_timedlock(). Use C89ATOMIC_SUPPRESS_FALLBACK_WARNING to suppress this warning.
+    #endif
+
+    int result;
+
+    if (time_point == NULL) {
+        return c89thrd_error;
+    }
+
+    for (;;) {
+        result = pthread_mutex_trylock(mutex);
+        if (result == EBUSY) {
+            struct timespec tsNow;
+            c89timespec_get(&tsNow, TIME_UTC);
+
+            if (c89timespec_cmp(tsNow, *time_point) > 0) {
+                result = ETIMEDOUT;
+                break;
+            } else {
+                /* Have not yet timed out. Need to wait a bit and then try again. */
+                c89thrd_sleep_timespec(c89timespec_nanoseconds(C89THREAD_TIMEDLOCK_WAIT_TIME_IN_NANOSECONDS));
+                continue;
+            }
+        } else {
+            break;
+        }
+    }
+
+    if (result == 0) {
+        return c89thrd_success;
+    } else {
+        if (result == ETIMEDOUT) {
+            return c89thrd_timedout;
+        } else {
+            return c89thrd_error;
+        }
+    }
+#endif
+}
+
 int c89mtx_timedlock(c89mtx_t* mutex, const struct timespec* time_point)
 {
     int result;
@@ -1158,7 +1321,7 @@ int c89mtx_timedlock(c89mtx_t* mutex, const struct timespec* time_point)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_timedlock(mutex, time_point);
+    result = c89pthread_mutex_timedlock(mutex, time_point);
     if (result != 0) {
         if (result == ETIMEDOUT) {
             return c89thrd_timedout;
@@ -1370,7 +1533,7 @@ int c89sem_timedwait(c89sem_t* sem, const struct timespec* time_point)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_timedlock(&sem->lock, time_point);
+    result = c89pthread_mutex_timedlock(&sem->lock, time_point);
     if (result != 0) {
         if (result == ETIMEDOUT) {
             return c89thrd_timedout;
@@ -1484,7 +1647,7 @@ int c89evnt_timedwait(c89evnt_t* evnt, const struct timespec* time_point)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_timedlock(&evnt->lock, time_point);
+    result = c89pthread_mutex_timedlock(&evnt->lock, time_point);
     if (result != 0) {
         if (result == ETIMEDOUT) {
             return c89thrd_timedout;
@@ -1535,13 +1698,13 @@ int c89evnt_signal(c89evnt_t* evnt)
 #include <windows.h>
 #endif
 
-void c89timespec_get(struct timespec* ts, int base)
+int c89timespec_get(struct timespec* ts, int base)
 {
     FILETIME ft;
     LONGLONG currentMilliseconds;
 
     if (ts == NULL) {
-        return;
+        return 0;   /* 0 = error. */
     }
 
     ts->tv_sec  = 0;
@@ -1549,7 +1712,7 @@ void c89timespec_get(struct timespec* ts, int base)
 
     /* Currently only supporting UTC. */
     if (base != TIME_UTC) {
-        return;
+        return 0;   /* 0 = error. */
     }
 
     GetSystemTimeAsFileTime(&ft);
@@ -1558,11 +1721,57 @@ void c89timespec_get(struct timespec* ts, int base)
 
     ts->tv_sec  = (time_t)(currentMilliseconds / 1000);
     ts->tv_nsec =  (long)((currentMilliseconds - (ts->tv_sec * 1000)) * 1000000);
+
+    return base;
 }
 #else
-void c89timespec_get(struct timespec* ts, int base)
+struct timespec c89timespec_from_timeval(struct timeval* tv)
 {
-    timespec_get(ts, base);
+    struct timespec ts;
+
+    ts.tv_sec  = tv->tv_sec;
+    ts.tv_nsec = tv->tv_usec * 1000;
+
+    return ts;
+}
+
+int c89timespec_get(struct timespec* ts, int base)
+{
+    /*
+    This is annoying to get working on all compilers. Here's the hierarchy:
+
+        * If using C11, use timespec_get(); else
+        * If _POSIX_C_SOURCE >= 199309L, use clock_gettime(CLOCK_REALTIME, ...); else
+        * Fall back to gettimeofday().
+    */
+#if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__APPLE__)
+    return timespec_get(ts, base);
+#else
+    if (base != TIME_UTC) {
+        return 0;   /* Only TIME_UTC is supported. 0 = error. */
+    }
+
+    #if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 199309L
+    {
+        if (clock_gettime(CLOCK_REALTIME, ts) != 0) {
+            return 0;   /* Failed to retrieve the time. 0 = error. */
+        }
+
+        /* Getting here means we were successful. On success, need to return base (strange...) */
+        return base;
+    }
+    #else
+    {
+        struct timeval tv;
+        if (gettimeofday(&tv, NULL) != 0) {
+            return 0;   /* Failed to retrieve the time. 0 = error. */
+        }
+
+        *ts = c89timespec_from_timeval(&tv);
+        return base;
+    }
+    #endif  /* _POSIX_C_SOURCE >= 199309L */
+#endif  /* C11 */
 }
 #endif
 
@@ -1576,12 +1785,12 @@ struct timespec c89timespec_now()
     return ts;
 }
 
-struct timespec c89timespec_seconds(time_t seconds)
+struct timespec c89timespec_nanoseconds(time_t nanoseconds)
 {
     struct timespec ts;
 
-    ts.tv_sec  = seconds;
-    ts.tv_nsec = 0;
+    ts.tv_sec  = nanoseconds / 1000000000;
+    ts.tv_nsec = (long)(nanoseconds - (ts.tv_sec * 1000000000));
 
     return ts;
 }
@@ -1592,6 +1801,16 @@ struct timespec c89timespec_milliseconds(time_t milliseconds)
 
     ts.tv_sec  = milliseconds / 1000;
     ts.tv_nsec = (long)((milliseconds - (ts.tv_sec * 1000)) * 1000000);
+
+    return ts;
+}
+
+struct timespec c89timespec_seconds(time_t seconds)
+{
+    struct timespec ts;
+
+    ts.tv_sec  = seconds;
+    ts.tv_nsec = 0;
 
     return ts;
 }
@@ -1624,6 +1843,27 @@ struct timespec c89timespec_add(struct timespec tsA, struct timespec tsB)
     }
 
     return ts;
+}
+
+int c89timespec_cmp(struct timespec tsA, struct timespec tsB)
+{
+    if (tsA.tv_sec == tsB.tv_sec) {
+        if (tsA.tv_nsec == tsB.tv_nsec) {
+            return 0;
+        } else {
+            if (tsA.tv_nsec > tsB.tv_nsec) {
+                return +1;
+            } else {
+                return -1;
+            }
+        }
+    } else {
+        if (tsA.tv_sec > tsB.tv_sec) {
+            return +1;
+        } else {
+            return -1;
+        }
+    }
 }
 
 
