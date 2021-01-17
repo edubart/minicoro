@@ -34,11 +34,12 @@ Most platforms are supported through different methods:
 | Platform     | Assembly Method  | Fallback Method   |
 |--------------|------------------|-------------------|
 | Android      | ARM/ARM64        | N/A               |
-| Windows      | x86_64           | fibers            |
+| Windows      | x86_64           | Windows fibers    |
 | Linux        | x86_64/i686      | ucontext          |
 | Mac OS X     | x86_64           | ucontext          |
-| Browser      | N/A              | emscripten fibers |
+| Browser      | N/A              | Emscripten fibers |
 | Raspberry Pi | ARM              | ucontext          |
+| RISC-V       | riscv64          | ucontext          |
 
 The assembly method is used by default if supported by the compiler and CPU,
 otherwise ucontext or fiber method is used as a fallback.
@@ -318,6 +319,7 @@ int main() {
 
 # Updates
 
+- **17-Jan-2021**: Add support for RISC-V 64 bits.
 - **16-Jan-2021**: Add support for Mac OS X x86_64, thanks @RandyGaul for testing, debugging and researching about it.
 - **15-Jan-2021**: Make assembly method the default one on Windows x86_64. Redesigned the storage API, thanks @RandyGaul for the suggestion.
 - **14-Jan-2021**: Add support for running with ASan (AddressSanitizer) and TSan (ThreadSanitizer).
