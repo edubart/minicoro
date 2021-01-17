@@ -38,6 +38,7 @@ Most platforms are supported through different methods:
 | Linux        | x86_64/i686      | ucontext          |
 | Mac OS X     | x86_64           | ucontext          |
 | Browser      | N/A              | emscripten fibers |
+| Raspberry Pi | ARM              | ucontext          |
 
 The assembly method is used by default if supported by the compiler and CPU,
 otherwise ucontext or fiber method is used as a fallback.
@@ -215,7 +216,7 @@ typedef struct mco_desc {
 } mco_desc;
 
 /* Coroutine functions. */
-mco_desc mco_desc_init(void (*func)(mco_coro* co), size_t stack_size);  /* Initialize description of a coroutine. When stack size is 0 then MCO_DEFAULT_STACK_SIZE is be used. */
+mco_desc mco_desc_init(void (*func)(mco_coro* co), size_t stack_size);  /* Initialize description of a coroutine. When stack size is 0 then MCO_DEFAULT_STACK_SIZE is used. */
 mco_result mco_init(mco_coro* co, mco_desc* desc);                      /* Initialize the coroutine. */
 mco_result mco_uninit(mco_coro* co);                                    /* Uninitialize the coroutine, may fail if it's not dead or suspended. */
 mco_result mco_create(mco_coro** out_co, mco_desc* desc);               /* Allocates and initializes a new coroutine. */
