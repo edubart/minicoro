@@ -549,7 +549,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 typedef struct _mco_ctxbuf {
   void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15, *rdi, *rsi;
-  void* xmm[10*2]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
+  void* xmm[20]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
   void* fiber_storage;
   void* dealloc_stack;
   void* stack_limit;
@@ -863,14 +863,14 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
 
 #elif defined(__ARM_EABI__)
 
-#if __SOFTFP__
-#define _MCO_FLOAT_SAVE   0
-#else
-#define _MCO_FLOAT_SAVE   16
-#endif
-
 typedef struct _mco_ctxbuf {
-  void* buf[_MCO_FLOAT_SAVE + 10]; /* [d8-d15,] r4-r11, lr, sp */
+#ifndef __SOFTFP__
+  void* f[16];
+#endif
+  void *d[4]; /* d8-d15 */
+  void *r[4]; /* r4-r11 */
+  void *lr;
+  void *sp;
 } _mco_ctxbuf;
 
 void _mco_wrap_main(void);
@@ -882,12 +882,12 @@ __asm__(
   ".type _mco_switch #function\n"
   ".hidden _mco_switch\n"
   "_mco_switch:\n"
-#if _MCO_FLOAT_SAVE
+#ifndef __SOFTFP__
   "  vstmia r0!, {d8-d15}\n"
 #endif
   "  stmia r0, {r4-r11, lr}\n"
   "  str sp, [r0, #9*4]\n"
-#if _MCO_FLOAT_SAVE
+#ifndef __SOFTFP__
   "  vldmia r1!, {d8-d15}\n"
 #endif
   "  ldr sp, [r1, #9*4]\n"
@@ -909,19 +909,21 @@ __asm__(
 );
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
-  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size);
-  ctx->buf[_MCO_FLOAT_SAVE+0] = (void*)(co);
-  ctx->buf[_MCO_FLOAT_SAVE+1] = (void*)(_mco_main);
-  ctx->buf[_MCO_FLOAT_SAVE+2] = (void*)(0xdeaddead); /* Dummy return address. */
-  ctx->buf[_MCO_FLOAT_SAVE+8] = (void*)(_mco_wrap_main);
-  ctx->buf[_MCO_FLOAT_SAVE+9] = stack_high_ptr;
+  ctx->d[0] = (void*)(co);
+  ctx->d[1] = (void*)(_mco_main);
+  ctx->d[2] = (void*)(0xdeaddead); /* Dummy return address. */
+  ctx->lr = (void*)(_mco_wrap_main);
+  ctx->sp = (void*)((size_t)stack_base + stack_size);
   return MCO_SUCCESS;
 }
 
 #elif defined(__aarch64__)
 
 typedef struct _mco_ctxbuf {
-  void* buf[22]; /* x19-x30, sp, lr, d8-d15 */
+  void *x[12]; /* x19-x30 */
+  void *sp;
+  void *lr;
+  void *d[8]; /* d8-d15 */
 } _mco_ctxbuf;
 
 void _mco_wrap_main(void);
@@ -975,12 +977,11 @@ __asm__(
 );
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
-  void** stack_high_ptr = (void**)((size_t)stack_base + stack_size);
-  ctx->buf[0] = (void*)(co);
-  ctx->buf[1] = (void*)(_mco_main);
-  ctx->buf[2] = (void*)(0xdeaddeaddeaddead); /* Dummy return address. */
-  ctx->buf[12] = (void*)((size_t)(stack_high_ptr) & ~15);
-  ctx->buf[13] = (void*)(_mco_wrap_main);
+  ctx->x[0] = (void*)(co);
+  ctx->x[1] = (void*)(_mco_main);
+  ctx->x[2] = (void*)(0xdeaddeaddeaddead); /* Dummy return address. */
+  ctx->sp = (void*)((size_t)stack_base + stack_size);
+  ctx->lr = (void*)(_mco_wrap_main);
   return MCO_SUCCESS;
 }
 
