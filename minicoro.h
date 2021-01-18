@@ -548,7 +548,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #ifdef _WIN32
 
 typedef struct _mco_ctxbuf {
-  void* buf[10]; /* rip, rsp, rbp, rbx, r12, r13, r14, r15, rdi, rsi */
+  void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15, *rdi, *rsi;
   void* xmm[10*2]; /* xmm6, xmm7, xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15 */
   void* fiber_storage;
   void* dealloc_stack;
@@ -640,10 +640,10 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
   stack_size = stack_size - 32; /* Reserve 32 bytes for the shadow space. */
   void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
-  ctx->buf[0] = (void*)(_mco_wrap_main);
-  ctx->buf[1] = (void*)(stack_high_ptr);
-  ctx->buf[4] = (void*)(_mco_main);
-  ctx->buf[5] = (void*)(co);
+  ctx->rip = (void*)(_mco_wrap_main);
+  ctx->rsp = (void*)(stack_high_ptr);
+  ctx->r12 = (void*)(_mco_main);
+  ctx->r13 = (void*)(co);
   void* stack_top = (void*)((size_t)stack_base + stack_size);
   ctx->stack_base = stack_top;
   ctx->stack_limit = stack_base;
@@ -654,39 +654,49 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
 #else /* not _WIN32 */
 
 typedef struct _mco_ctxbuf {
-  void* buf[8]; /* rip, rsp, rbp, rbx, r12, r13, r14, r15 */
+  void *rip, *rsp, *rbp, *rbx, *r12, *r13, *r14, *r15;
 } _mco_ctxbuf;
 
-static void _mco_wrap_main(void) {
-  __asm__ __volatile__ (
-    "movq %r13, %rdi\n\t"
-    "jmpq *%r12");
-}
+void _mco_wrap_main(void);
+int _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to);
 
-static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
-  __asm__ __volatile__ (
-    "leaq 1f(%%rip), %%rax\n\t"
-    "movq %%rax, (%0)\n\t"
-    "movq %%rsp, 8(%0)\n\t"
-    "movq %%rbp, 16(%0)\n\t"
-    "movq %%rbx, 24(%0)\n\t"
-    "movq %%r12, 32(%0)\n\t"
-    "movq %%r13, 40(%0)\n\t"
-    "movq %%r14, 48(%0)\n\t"
-    "movq %%r15, 56(%0)\n\t"
-    "movq 56(%1), %%r15\n\t"
-    "movq 48(%1), %%r14\n\t"
-    "movq 40(%1), %%r13\n\t"
-    "movq 32(%1), %%r12\n\t"
-    "movq 24(%1), %%rbx\n\t"
-    "movq 16(%1), %%rbp\n\t"
-    "movq 8(%1), %%rsp\n\t"
-    "jmpq *(%1)\n"
-    "1:\n"
-    : "+S" (from), "+D" (to) :
-    : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory", "cc");
-}
+__asm__(
+  ".text\n"
+  ".globl _mco_wrap_main\n"
+  ".type _mco_wrap_main @function\n"
+  ".hidden _mco_wrap_main\n"
+  "_mco_wrap_main:\n"
+  "  movq %r13, %rdi\n"
+  "  jmpq *%r12\n"
+  ".size _mco_wrap_main, .-_mco_wrap_main\n"
+);
 
+__asm__(
+  ".text\n"
+  ".globl _mco_switch\n"
+  ".type _mco_switch @function\n"
+  ".hidden _mco_switch\n"
+  "_mco_switch:\n"
+  "  leaq 0x3d(%rip), %rax\n"
+  "  movq %rax, (%rdi)\n"
+  "  movq %rsp, 8(%rdi)\n"
+  "  movq %rbp, 16(%rdi)\n"
+  "  movq %rbx, 24(%rdi)\n"
+  "  movq %r12, 32(%rdi)\n"
+  "  movq %r13, 40(%rdi)\n"
+  "  movq %r14, 48(%rdi)\n"
+  "  movq %r15, 56(%rdi)\n"
+  "  movq 56(%rsi), %r15\n"
+  "  movq 48(%rsi), %r14\n"
+  "  movq 40(%rsi), %r13\n"
+  "  movq 32(%rsi), %r12\n"
+  "  movq 24(%rsi), %rbx\n"
+  "  movq 16(%rsi), %rbp\n"
+  "  movq 8(%rsi), %rsp\n"
+  "  jmpq *(%rsi)\n"
+  "  ret\n"
+  ".size _mco_switch, .-_mco_switch\n"
+);
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
   stack_size = stack_size - 128; /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */
@@ -695,10 +705,10 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
 #endif
   void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
-  ctx->buf[0] = (void*)(_mco_wrap_main);
-  ctx->buf[1] = (void*)(stack_high_ptr);
-  ctx->buf[4] = (void*)(_mco_main);
-  ctx->buf[5] = (void*)(co);
+  ctx->rip = (void*)(_mco_wrap_main);
+  ctx->rsp = (void*)(stack_high_ptr);
+  ctx->r12 = (void*)(_mco_main);
+  ctx->r13 = (void*)(co);
   return MCO_SUCCESS;
 }
 
@@ -811,7 +821,7 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
 typedef struct _mco_ctxbuf {
   void* buf[4]; /* eip, esp, ebp, ebx */
 } _mco_ctxbuf;
-static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   __asm__ __volatile__ (
     "call 1f\n"
     "1:\tpopl %%eax\n\t"
@@ -831,7 +841,7 @@ static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
 typedef struct _mco_ctxbuf {
   void* buf[3]; /* eip, esp, ebp */
 } _mco_ctxbuf;
-static MCO_FORCE_INLINE void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
+static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
   __asm__ __volatile__ (
     "movl $1f, (%0)\n\t"
     "movl %%esp, 4(%0)\n\t"

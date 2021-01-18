@@ -319,6 +319,7 @@ int main() {
 
 # Updates
 
+- **18-Jan-2021**: Fix issues when using Clang on Linux.
 - **17-Jan-2021**: Add support for RISC-V 64 bits.
 - **16-Jan-2021**: Add support for Mac OS X x86_64, thanks @RandyGaul for testing, debugging and researching about it.
 - **15-Jan-2021**: Make assembly method the default one on Windows x86_64. Redesigned the storage API, thanks @RandyGaul for the suggestion.
