@@ -817,49 +817,47 @@ static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base,
 
 #elif defined(__i386) || defined(__i386__)
 
-#ifdef __PIC__
 typedef struct _mco_ctxbuf {
-  void* buf[4]; /* eip, esp, ebp, ebx */
+  void *eip, *esp, *ebp, *ebx, *esi, *edi;
 } _mco_ctxbuf;
-static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
-  __asm__ __volatile__ (
-    "call 1f\n"
-    "1:\tpopl %%eax\n\t"
-    "addl $(2f-1b),%%eax\n\t"
-    "movl %%eax, (%0)\n\t"
-    "movl %%esp, 4(%0)\n\t"
-    "movl %%ebp, 8(%0)\n\t"
-    "movl %%ebx, 12(%0)\n\t"
-    "movl 12(%1), %%ebx\n\t"
-    "movl 8(%1), %%ebp\n\t"
-    "movl 4(%1), %%esp\n\t"
-    "jmp *(%1)\n"
-    "2:\n"
-    : "+S" (from), "+D" (to) : : "eax", "ecx", "edx", "memory", "cc");
-}
-#else
-typedef struct _mco_ctxbuf {
-  void* buf[3]; /* eip, esp, ebp */
-} _mco_ctxbuf;
-static void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to) {
-  __asm__ __volatile__ (
-    "movl $1f, (%0)\n\t"
-    "movl %%esp, 4(%0)\n\t"
-    "movl %%ebp, 8(%0)\n\t"
-    "movl 8(%1), %%ebp\n\t"
-    "movl 4(%1), %%esp\n\t"
-    "jmp *(%1)\n"
-    "1:\n"
-    : "+S" (from), "+D" (to) : : "eax", "ebx", "ecx", "edx", "memory", "cc");
-}
-#endif /* __PIC__ */
+
+void _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to);
+
+__asm__(
+  ".text\n"
+  ".globl _mco_switch\n"
+  ".type _mco_switch @function\n"
+  ".hidden _mco_switch\n"
+  "_mco_switch:\n"
+  "  call 1f\n"
+  "  1:\n"
+  "  popl %ecx\n"
+  "  addl $(2f-1b), %ecx\n"
+  "  movl 4(%esp), %eax\n"
+  "  movl 8(%esp), %edx\n"
+  "  movl %ecx, (%eax)\n"
+  "  movl %esp, 4(%eax)\n"
+  "  movl %ebp, 8(%eax)\n"
+  "  movl %ebx, 12(%eax)\n"
+  "  movl %esi, 16(%eax)\n"
+  "  movl %edi, 20(%eax)\n"
+  "  movl 20(%edx), %edi\n"
+  "  movl 16(%edx), %esi\n"
+  "  movl 12(%edx), %ebx\n"
+  "  movl 8(%edx), %ebp\n"
+  "  movl 4(%edx), %esp\n"
+  "  jmp *(%edx)\n"
+  "  2:\n"
+  "  ret\n"
+  ".size _mco_switch, .-_mco_switch\n"
+);
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
   void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - 16 - 1*sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddead);  /* Dummy return address. */
   stack_high_ptr[1] = (void*)(co);
-  ctx->buf[0] = (void*)(_mco_main);
-  ctx->buf[1] = (void*)(stack_high_ptr);
+  ctx->eip = (void*)(_mco_main);
+  ctx->esp = (void*)(stack_high_ptr);
   return MCO_SUCCESS;
 }
 
