@@ -331,6 +331,13 @@ int main() {
 - **10-Jan-2021**: Minor API improvements and document more.
 - **09-Jan-2021**: Library created.
 
+# Donation
+
+I'm a full-time open source developer.
+Any amount of the donation will be appreciated and could bring me encouragement to keep supporting this and other open source projects.
+
+[![Become a Patron](https://c5.patreon.com/external/logo/become_a_patron_button.png)](https://www.patreon.com/edubart)
+
 # License
 
 Your choice of either Public Domain or MIT No Attribution, see LICENSE file.
