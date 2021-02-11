@@ -20,29 +20,32 @@ RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
 
 all: testsuite example mt-example simple benchmark
 
-test: testsuite example mt-example simple
+test: testsuite
 	$(RUNNER) ./testsuite$(OUTEXT)
-	#$(RUNNER) ./example$(OUTEXT)
-	#$(RUNNER) ./mt-example$(OUTEXT)
-	#$(RUNNER) ./simple$(OUTEXT)
+
+test-all: testsuite example mt-example simple
+	$(RUNNER) ./testsuite$(OUTEXT)
+	$(RUNNER) ./example$(OUTEXT)
+	$(RUNNER) ./mt-example$(OUTEXT)
+	$(RUNNER) ./simple$(OUTEXT)
 
 bench: benchmark
 	./benchmark$(OUTEXT)
 
 testsuite: testsuite.c ../minicoro.h Makefile
-	$(CC) $(EXTRA_CFLAGS) $(CFLAGS) testsuite.c -o testsuite
+	$(CC) testsuite.c -o testsuite $(EXTRA_CFLAGS) $(CFLAGS)
 
 example: example.c ../minicoro.h Makefile
-	$(CC) $(EXTRA_CFLAGS) $(CFLAGS) example.c -o example
+	$(CC) example.c -o example $(EXTRA_CFLAGS) $(CFLAGS)
 
 mt-example: mt-example.c ../minicoro.h Makefile
-	$(CC) $(EXTRA_CFLAGS) $(CFLAGS) -std=gnu11 -lpthread mt-example.c -o mt-example
+	$(CC) mt-example.c -o mt-example $(EXTRA_CFLAGS) $(CFLAGS) -std=gnu11 -lpthread
 
 simple: simple.c ../minicoro.h Makefile
-	$(CC) $(EXTRA_CFLAGS) $(CFLAGS) -std=c99 simple.c -o simple
+	$(CC) simple.c -o simple $(EXTRA_CFLAGS) $(CFLAGS) -std=c99
 
 benchmark: benchmark.c ../minicoro.h Makefile
-	$(CC) $(EXTRA_CFLAGS) $(CFLAGS) $(RELEASE_CFLAGS) -std=c99 benchmark.c -o benchmark
+	$(CC) benchmark.c -o benchmark $(EXTRA_CFLAGS) $(CFLAGS) $(RELEASE_CFLAGS) -std=c99
 
 clean:
 	rm -f testsuite$(OUTEXT) example$(OUTEXT) mt-example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT)
