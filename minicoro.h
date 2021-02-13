@@ -662,21 +662,33 @@ int _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to);
 
 __asm__(
   ".text\n"
+#ifdef __MACH__ /* Mac OS X assembler */
+  ".globl __mco_wrap_main\n"
+  "__mco_wrap_main:\n"
+#else /* Linux assembler */
   ".globl _mco_wrap_main\n"
   ".type _mco_wrap_main @function\n"
   ".hidden _mco_wrap_main\n"
   "_mco_wrap_main:\n"
+#endif
   "  movq %r13, %rdi\n"
   "  jmpq *%r12\n"
+#ifndef __MACH__
   ".size _mco_wrap_main, .-_mco_wrap_main\n"
+#endif
 );
 
 __asm__(
   ".text\n"
+#ifdef __MACH__ /* Mac OS assembler */
+  ".globl __mco_switch\n"
+  "__mco_switch:\n"
+#else /* Linux assembler */
   ".globl _mco_switch\n"
   ".type _mco_switch @function\n"
   ".hidden _mco_switch\n"
   "_mco_switch:\n"
+#endif
   "  leaq 0x3d(%rip), %rax\n"
   "  movq %rax, (%rdi)\n"
   "  movq %rsp, 8(%rdi)\n"
@@ -695,14 +707,13 @@ __asm__(
   "  movq 8(%rsi), %rsp\n"
   "  jmpq *(%rsi)\n"
   "  ret\n"
+#ifndef __MACH__
   ".size _mco_switch, .-_mco_switch\n"
+#endif
 );
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
   stack_size = stack_size - 128; /* Reserve 128 bytes for the Red Zone space (System V AMD64 ABI). */
-#ifdef __APPLE__
-  stack_size = stack_size - 8; /* MacOS X needs the stack pointer to be ESP mod 16 = 8 aligned. */
-#endif
   void** stack_high_ptr = (void**)((size_t)stack_base + stack_size - sizeof(size_t));
   stack_high_ptr[0] = (void*)(0xdeaddeaddeaddead);  /* Dummy return address. */
   ctx->rip = (void*)(_mco_wrap_main);
