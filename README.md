@@ -319,6 +319,7 @@ int main() {
 
 # Updates
 
+- **19-Jan-2021**: Fix compilation and issues on Mac OS X, release v0.1.1.
 - **19-Jan-2021**: First release, v0.1.0.
 - **18-Jan-2021**: Fix issues when using Clang on Linux.
 - **17-Jan-2021**: Add support for RISC-V 64 bits.

@@ -1,6 +1,6 @@
 /*
 Minimal asymmetric stackful cross-platform coroutine library in pure C.
-minicoro - v0.1.0 - 19/Jan/2021
+minicoro - v0.1.1 - 13/Feb/2021
 Eduardo Bart - edub4rt@gmail.com
 https://github.com/edubart/minicoro
 
