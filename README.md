@@ -39,7 +39,7 @@ Most platforms are supported through different methods:
 | Mac OS X     | x86_64           | ucontext          |
 | Browser      | N/A              | Emscripten fibers |
 | Raspberry Pi | ARM              | ucontext          |
-| RISC-V       | riscv64          | ucontext          |
+| RISC-V       | rv64/rv32        | ucontext          |
 
 The assembly method is used by default if supported by the compiler and CPU,
 otherwise ucontext or fiber method is used as a fallback.
@@ -319,6 +319,7 @@ int main() {
 
 # Updates
 
+- **12-Mar-2021**: Added support for RISC-V RV32.
 - **19-Jan-2021**: Fix compilation and issues on Mac OS X, release v0.1.1.
 - **19-Jan-2021**: First release, v0.1.0.
 - **18-Jan-2021**: Fix issues when using Clang on Linux.

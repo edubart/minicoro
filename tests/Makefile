@@ -1,6 +1,6 @@
 CC=gcc
 OUTEXT=
-CFLAGS=-Og -std=c89
+CFLAGS=-Og -std=c89 $(MYCFLAGS)
 EXTRA_CFLAGS=-Wall -Wextra -I..
 RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
 # CFLAGS+=-m32
@@ -22,6 +22,9 @@ all: testsuite example mt-example simple benchmark
 
 test: testsuite
 	$(RUNNER) ./testsuite$(OUTEXT)
+
+test-example: example
+	$(RUNNER) ./example$(OUTEXT)
 
 test-all: testsuite example mt-example simple
 	$(RUNNER) ./testsuite$(OUTEXT)
@@ -49,6 +52,12 @@ benchmark: benchmark.c ../minicoro.h Makefile
 
 clean:
 	rm -f testsuite$(OUTEXT) example$(OUTEXT) mt-example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT)
+
+test-riscv64:
+	$(MAKE) --no-print-directory CC=riscv64-elf-gcc CFLAGS="-march=rv64gc -mabi=lp64d" RUNNER=qemu-riscv64 clean test test-example
+
+test-riscv32:
+	$(MAKE) --no-print-directory CC=riscv64-elf-gcc CFLAGS="-march=rv32gc -mabi=ilp32f" RUNNER=qemu-riscv32 clean test test-example
 
 test-linux-full:
 	$(MAKE) --no-print-directory clean test CC=clang CFLAGS="-Og -fsanitize=address"
