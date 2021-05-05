@@ -54,7 +54,8 @@ to create, resume, yield or destroy a coroutine.
 - To use in multithread applications, you must compile with C compiler that supports `thread_local` qualifier.
 - Some unsupported sanitizers for C may trigger false warnings when using coroutines.
 - The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
-- Take care to not cause stack overflows, otherwise your program may crash or not, the behavior is undefined.
+- Stack space is fixed, it cannot grow. By default it has about 56KB of space, this can be changed on coroutine creation.
+- Take care to not cause stack overflows (run out of stack space), otherwise your program may crash or not, the behavior is undefined.
 - On WebAssembly you must compile with emscripten flag `-s ASYNCIFY=1`.
 
 # Introduction
