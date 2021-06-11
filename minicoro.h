@@ -81,7 +81,7 @@ you can  optionally set `user_data` on its creation and later retrieve with `mco
 
 To pass values between resume and yield,
 you can optionally use `mco_push` and `mco_pop` APIs,
-they are intended to pass temporary values using a FIFO style buffer.
+they are intended to pass temporary values using a LIFO style buffer.
 The storage system can also be used to send and receive initial values on coroutine creation or before it finishes.
 
 # Usage
