@@ -215,7 +215,7 @@ typedef enum mco_state {
   MCO_DEAD = 0,  /* The coroutine has finished normally or was uninitialized before finishing. */
   MCO_NORMAL,    /* The coroutine is active but not running (that is, it has resumed another coroutine). */
   MCO_RUNNING,   /* The coroutine is active and running. */
-  MCO_SUSPENDED, /* The coroutine is suspended (in a call to yield, or it has not started running yet). */
+  MCO_SUSPENDED  /* The coroutine is suspended (in a call to yield, or it has not started running yet). */
 } mco_state;
 
 /* Coroutine result codes. */
@@ -1730,9 +1730,8 @@ const char* mco_result_description(mco_result res) {
       return "Invalid arguments";
     case MCO_INVALID_OPERATION:
       return "Invalid operation";
-    default:
-      return "Unknown error";
   }
+  return "Unknown error";
 }
 
 #ifdef __cplusplus
