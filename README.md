@@ -142,7 +142,7 @@ int main() {
 
 _NOTE_: In case you don't want to use the minicoro allocator system you should
 allocate a coroutine object yourself using `mco_desc.coro_size` and call `mco_init`,
-then later to destroy call `mco_deinit` and deallocate it.
+then later to destroy call `mco_uninit` and deallocate it.
 
 ## Yielding from anywhere
 
@@ -320,6 +320,7 @@ int main() {
 
 # Updates
 
+- **22-Aug-2021**: Added checks for stack overflow.
 - **12-Mar-2021**: Added support for RISC-V RV32.
 - **19-Jan-2021**: Fix compilation and issues on Mac OS X, release v0.1.1.
 - **19-Jan-2021**: First release, v0.1.0.

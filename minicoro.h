@@ -141,7 +141,7 @@ int main() {
 
 _NOTE_: In case you don't want to use the minicoro allocator system you should
 allocate a coroutine object yourself using `mco_desc.coro_size` and call `mco_init`,
-then later to destroy call `mco_deinit` and deallocate it.
+then later to destroy call `mco_uninit` and deallocate it.
 
 ## Yielding from anywhere
 
@@ -232,6 +232,7 @@ typedef enum mco_result {
   MCO_OUT_OF_MEMORY,
   MCO_INVALID_ARGUMENTS,
   MCO_INVALID_OPERATION,
+  MCO_STACK_OVERFLOW,
 } mco_result;
 
 /* Coroutine structure. */
@@ -252,6 +253,7 @@ struct mco_coro {
   void* asan_prev_stack; /* Used by address sanitizer. */
   void* tsan_prev_fiber; /* Used by thread sanitizer. */
   void* tsan_fiber; /* Used by thread sanitizer. */
+  size_t magic_number; /* Used to check stack overflow. */
 };
 
 /* Structure used to initialize a coroutine. */
@@ -313,6 +315,9 @@ extern "C" {
 #ifndef MCO_DEFAULT_STACK_SIZE
 #define MCO_DEFAULT_STACK_SIZE 57344 /* Don't use multiples of 64K to avoid D-cache aliasing conflicts. */
 #endif
+
+/* Number used only to assist checking for stack overflows. */
+#define MCO_MAGIC_NUMBER 0x7E3CB1A9
 
 /* Detect implementation based on OS, arch and compiler. */
 #if !defined(MCO_USE_UCONTEXT) && !defined(MCO_USE_FIBERS) && !defined(MCO_USE_ASM)
@@ -1497,6 +1502,7 @@ mco_result mco_init(mco_coro* co, mco_desc* desc) {
 #ifdef _MCO_USE_TSAN
   co->tsan_fiber = __tsan_create_fiber(0);
 #endif
+  co->magic_number = MCO_MAGIC_NUMBER;
   return MCO_SUCCESS;
 }
 
@@ -1587,6 +1593,15 @@ mco_result mco_yield(mco_coro* co) {
   if(!co) {
     MCO_LOG("attempt to yield an invalid coroutine");
     return MCO_INVALID_COROUTINE;
+  }
+  /* This check happens when the stack overflow already happened, but better later than never. */
+  volatile size_t dummy;
+  size_t stack_addr = (size_t)&dummy;
+  size_t stack_min = (size_t)co->stack_base;
+  size_t stack_max = stack_min + co->stack_size;
+  if(co->magic_number != MCO_MAGIC_NUMBER || stack_addr < stack_min || stack_addr > stack_max) { /* Stack overflow. */
+    MCO_LOG("coroutine stack overflow, try increasing the stack size");
+    return MCO_STACK_OVERFLOW;
   }
   if(co->state != MCO_RUNNING) {  /* Can only yield coroutines that are running. */
     MCO_LOG("attempt to yield a coroutine that is not running");
@@ -1730,6 +1745,8 @@ const char* mco_result_description(mco_result res) {
       return "Invalid arguments";
     case MCO_INVALID_OPERATION:
       return "Invalid operation";
+    case MCO_STACK_OVERFLOW:
+      return "Stack overflow";
   }
   return "Unknown error";
 }
