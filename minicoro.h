@@ -998,10 +998,15 @@ int _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to);
 
 __asm__(
   ".text\n"
+#ifdef __APPLE__
+  ".globl __mco_switch\n"
+  "__mco_switch:\n"
+#else
   ".globl _mco_switch\n"
   ".type _mco_switch #function\n"
   ".hidden _mco_switch\n"
   "_mco_switch:\n"
+#endif
 #ifndef __SOFTFP__
   "  vstmia r0!, {d8-d15}\n"
 #endif
@@ -1012,20 +1017,29 @@ __asm__(
 #endif
   "  ldr sp, [r1, #9*4]\n"
   "  ldmia r1, {r4-r11, pc}\n"
+#ifndef __APPLE__
   ".size _mco_switch, .-_mco_switch\n"
+#endif
 );
 
 __asm__(
   ".text\n"
+#ifdef __APPLE__
+  ".globl __mco_wrap_main\n"
+  "__mco_wrap_main:\n"
+#else
   ".globl _mco_wrap_main\n"
   ".type _mco_wrap_main #function\n"
   ".hidden _mco_wrap_main\n"
   "_mco_wrap_main:\n"
+#endif
   "  mov r0, r4\n"
   "  mov ip, r5\n"
   "  mov lr, r6\n"
   "  bx ip\n"
+#ifndef __APPLE__
   ".size _mco_wrap_main, .-_mco_wrap_main\n"
+#endif
 );
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
@@ -1051,10 +1065,16 @@ int _mco_switch(_mco_ctxbuf* from, _mco_ctxbuf* to);
 
 __asm__(
   ".text\n"
+#ifdef __APPLE__
+  ".globl __mco_switch\n"
+  "__mco_switch:\n"
+#else
   ".globl _mco_switch\n"
   ".type _mco_switch #function\n"
   ".hidden _mco_switch\n"
   "_mco_switch:\n"
+#endif
+  
   "  mov x10, sp\n"
   "  mov x11, x30\n"
   "  stp x19, x20, [x0, #(0*16)]\n"
@@ -1081,19 +1101,28 @@ __asm__(
   "  ldp x10, x11, [x1, #(6*16)]\n"
   "  mov sp, x10\n"
   "  br x11\n"
+#ifndef __APPLE__
   ".size _mco_switch, .-_mco_switch\n"
+#endif
 );
 
 __asm__(
   ".text\n"
+#ifdef __APPLE__
+  ".globl __mco_wrap_main\n"
+  "__mco_wrap_main:\n"
+#else
   ".globl _mco_wrap_main\n"
   ".type _mco_wrap_main #function\n"
   ".hidden _mco_wrap_main\n"
   "_mco_wrap_main:\n"
+#endif
   "  mov x0, x19\n"
   "  mov x30, x21\n"
   "  br x20\n"
+#ifndef __APPLE__
   ".size _mco_wrap_main, .-_mco_wrap_main\n"
+#endif
 );
 
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
