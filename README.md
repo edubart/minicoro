@@ -34,10 +34,11 @@ Most platforms are supported through different methods:
 | Platform     | Assembly Method  | Fallback Method   |
 |--------------|------------------|-------------------|
 | Android      | ARM/ARM64        | N/A               |
+| iOS          | ARM/ARM64        | N/A               |
 | Windows      | x86_64           | Windows fibers    |
 | Linux        | x86_64/i686      | ucontext          |
 | Mac OS X     | x86_64           | ucontext          |
-| Browser      | N/A              | Emscripten fibers |
+| WebAssembly  | N/A              | Emscripten fibers |
 | Raspberry Pi | ARM              | ucontext          |
 | RISC-V       | rv64/rv32        | ucontext          |
 
@@ -320,7 +321,7 @@ int main() {
 
 # Updates
 
-- **22-Aug-2021**: Added checks for stack overflow.
+- **22-Aug-2021**: Added checks for stack overflow and iOS support.
 - **12-Mar-2021**: Added support for RISC-V RV32.
 - **19-Jan-2021**: Fix compilation and issues on Mac OS X, release v0.1.1.
 - **19-Jan-2021**: First release, v0.1.0.

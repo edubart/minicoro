@@ -33,10 +33,11 @@ Most platforms are supported through different methods:
 | Platform     | Assembly Method  | Fallback Method   |
 |--------------|------------------|-------------------|
 | Android      | ARM/ARM64        | N/A               |
+| iOS          | ARM/ARM64        | N/A               |
 | Windows      | x86_64           | Windows fibers    |
 | Linux        | x86_64/i686      | ucontext          |
 | Mac OS X     | x86_64           | ucontext          |
-| Browser      | N/A              | Emscripten fibers |
+| WebAssembly  | N/A              | Emscripten fibers |
 | Raspberry Pi | ARM              | ucontext          |
 | RISC-V       | rv64/rv32        | ucontext          |
 
