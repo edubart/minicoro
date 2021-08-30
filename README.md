@@ -321,6 +321,7 @@ int main() {
 
 # Updates
 
+- **30-Aug-2021**: Fix stack overflow crash on Windows 32 bits.
 - **22-Aug-2021**: Added checks for stack overflow and iOS support.
 - **12-Mar-2021**: Added support for RISC-V RV32.
 - **19-Jan-2021**: Fix compilation and issues on Mac OS X, release v0.1.1.

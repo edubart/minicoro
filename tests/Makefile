@@ -16,6 +16,8 @@ RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
 
 # CC=x86_64-w64-mingw32-gcc
 # CC=x86_64-w64-mingw32-clang
+# CC=i686-w64-mingw32-gcc
+# CC=i686-w64-mingw32-clang
 # OUTEXT=.exe
 # RUNNER=
 

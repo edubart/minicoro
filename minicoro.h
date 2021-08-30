@@ -1342,7 +1342,7 @@ static mco_result _mco_create_context(mco_coro* co, mco_desc* desc) {
   }
   context->fib = fib;
   co->context = context;
-  co->stack_base = fib->stack_base;
+  co->stack_base = (void*)((size_t)fib->stack_base - desc->stack_size);
   co->stack_size = desc->stack_size;
   co->storage = storage;
   co->storage_size = desc->storage_size;
