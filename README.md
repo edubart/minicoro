@@ -321,8 +321,9 @@ int main() {
 
 # Updates
 
+- **01-Sep-2021**: Added support for DOSBox (MS-DOS Emulator).
 - **30-Aug-2021**: Fix stack overflow crash on Windows 32 bits.
-- **22-Aug-2021**: Added checks for stack overflow and iOS support.
+- **22-Aug-2021**: Added checks for stack overflow and iOS support (thanks @srberg).
 - **12-Mar-2021**: Added support for RISC-V RV32.
 - **19-Jan-2021**: Fix compilation and issues on Mac OS X, release v0.1.1.
 - **19-Jan-2021**: First release, v0.1.0.
