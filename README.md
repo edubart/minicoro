@@ -38,7 +38,7 @@ Most platforms are supported through different methods:
 | Windows      | x86_64           | Windows fibers    |
 | Linux        | x86_64/i686      | ucontext          |
 | Mac OS X     | x86_64/ARM/ARM64 | ucontext          |
-| WebAssembly  | N/A              | Emscripten fibers |
+| WebAssembly  | N/A              | Emscripten fibers / Binaryen asyncify |
 | Raspberry Pi | ARM              | ucontext          |
 | RISC-V       | rv64/rv32        | ucontext          |
 
@@ -57,7 +57,11 @@ to create, resume, yield or destroy a coroutine.
 - The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
 - Stack space is fixed, it cannot grow. By default it has about 56KB of space, this can be changed on coroutine creation.
 - Take care to not cause stack overflows (run out of stack space), otherwise your program may crash or not, the behavior is undefined.
-- On WebAssembly you must compile with emscripten flag `-s ASYNCIFY=1`.
+- On WebAssembly you must compile with Emscripten flag `-s ASYNCIFY=1`.
+- The WebAssembly Binaryen asyncify method can be used when explicitly enabled,
+you may want to do this only to use minicoro with WebAssembly native interpreters
+(no Web browser). This method is confirmed to work well with Emscripten toolchain,
+however it fails on other WebAssembly toolchains like WASI SDK.
 
 # Introduction
 
@@ -183,6 +187,7 @@ The following can be defined to change the library behavior:
 - `MCO_USE_ASM`               - Force use of assembly context switch implementation.
 - `MCO_USE_UCONTEXT`          - Force use of ucontext context switch implementation.
 - `MCO_USE_FIBERS`            - Force use of fibers context switch implementation.
+- `MCO_USE_ASYNCIFY`          - Force use of Binaryen asyncify context switch implementation.
 - `MCO_USE_VALGRIND`          - Define if you want run with valgrind to fix accessing memory errors.
 
 # Benchmarks
@@ -321,6 +326,7 @@ int main() {
 
 # Updates
 
+- **26-Jan-2022**: Added support for WebAssembly outside the WebBrowser using Binaryen asyncify pass.
 - **01-Sep-2021**: Added support for DOSBox (MS-DOS Emulator).
 - **30-Aug-2021**: Fix stack overflow crash on Windows 32 bits.
 - **22-Aug-2021**: Added checks for stack overflow and iOS support (thanks @srberg).
