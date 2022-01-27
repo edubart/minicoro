@@ -3,6 +3,11 @@ OUTEXT=
 CFLAGS=-Og -std=c89 $(MYCFLAGS)
 EXTRA_CFLAGS=-Wall -Wextra -I..
 RELEASE_CFLAGS=-O3 -flto -march=native -DNDEBUG -DMCO_NO_MULTITHREAD
+
+EMCC=emcc
+EMCC_FLAGS=-Oz -I.. -DMCO_USE_ASYNCIFY -s ERROR_ON_UNDEFINED_SYMBOLS=0 -s ASYNCIFY=1 -s BINARYEN_EXTRA_PASSES=--flexible-inline-max-function-size=0,--one-caller-inline-max-function-size=0
+WASMTIME=wasmtime
+
 # CFLAGS+=-m32
 # CFLAGS+=-DMCO_USE_FIBERS
 # CFLAGS+=-DMCO_USE_ASM
@@ -103,3 +108,9 @@ test-linux-full:
 	$(MAKE) --no-print-directory clean test CC=gcc CFLAGS="-O2 -DMCO_USE_VALGRIND" RUNNER=valgrind
 	$(MAKE) --no-print-directory clean test CC=gcc CFLAGS="-O1 -DMCO_USE_VALGRIND" RUNNER=valgrind
 	$(MAKE) --no-print-directory clean test CC=gcc CFLAGS="-O0 -DMCO_USE_VALGRIND" RUNNER=valgrind
+
+test-wasm-standalone:
+	$(EMCC) -s $(EMCC_FLAGS) example.c -o example.wasm
+	$(EMCC) -s $(EMCC_FLAGS) testsuite.c -o testsuite.wasm
+	$(EMCC) -s $(EMCC_FLAGS) simple.c -o simple.wasm
+	$(WASMTIME) example.wasm
