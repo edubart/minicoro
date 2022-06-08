@@ -326,6 +326,7 @@ int main() {
 
 # Updates
 
+- **08-Jun-2022**: Minicoro has been awarded by the [Icculus Microgrant 2021](https://icculus.org/microgrant/), thanks @icculus for supporting open source work.
 - **26-Jan-2022**: Added support for WebAssembly outside the WebBrowser using Binaryen asyncify pass.
 - **01-Sep-2021**: Added support for DOSBox (MS-DOS Emulator).
 - **30-Aug-2021**: Fix stack overflow crash on Windows 32 bits.
