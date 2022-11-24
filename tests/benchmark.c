@@ -16,6 +16,12 @@ static inline uint64_t rdtsc() {
   __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
   return ( (uint64_t)lo)|( ((uint64_t)hi)<<32 );
 }
+#elif defined(__aarch64__)
+static inline uint64_t rdtsc() {
+  uint64_t val;
+  __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(val));
+  return val;
+}
 #endif
 
 #define SWITCH_ITERATIONS 10000000
