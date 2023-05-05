@@ -6,13 +6,13 @@
 void simple_for_and_finished(mco_coro *co)
 {
   int i = 0;
-  int *args;
+  int args;
   mco_pop(co, &args, sizeof(args));
   for (i = 0; i < 10; ++i)
   {
     printf("Hello,  acrop_main %d\n", i);
     fflush(stdout);
-    *args = i;
+    args = i;
     mco_push(co, &args, sizeof(args));
     mco_yield(co);
   }
@@ -38,16 +38,17 @@ int main()
   co = co_create(simple_for_and_finished, &val);
   for (;;) {
     mco_resume(co);
-    mco_pop(co,(void)val, sizeof(val));
+    mco_pop(co, &val, sizeof(val));
     fflush(stdout);
     if (k == 10){
       break;
     }
-    printf("done with %d\n", k);
-    assert(k == val);
+    printf("done with k %d\n", k);
+    printf("done with val %d\n", val);
     k += 1;
   }
 
+  mco_destroy(co);
   assert(9 == val);
   return 0;
 }
