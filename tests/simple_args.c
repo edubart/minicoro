@@ -16,6 +16,8 @@ void simple_for_and_finished(mco_coro *co)
     mco_push(co, &args, sizeof(args));
     mco_yield(co);
   }
+
+  mco_push(co, &args, sizeof(args));
 }
 
 mco_coro *co_create(void (*func)(mco_coro *co), void *any)
@@ -37,18 +39,20 @@ int main()
   int k = 0;
   co = co_create(simple_for_and_finished, &val);
   for (;;) {
+    if (k == 10)
+    {
+      break;
+    }
     mco_resume(co);
     mco_pop(co, &val, sizeof(val));
     fflush(stdout);
-    if (k == 10){
-      break;
-    }
     printf("done with k %d\n", k);
     printf("done with val %d\n", val);
     k += 1;
   }
 
-  mco_destroy(co);
   assert(9 == val);
+  mco_destroy(co);
+
   return 0;
 }
