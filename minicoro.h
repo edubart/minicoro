@@ -304,8 +304,8 @@ MCO_API mco_coro *mco_start(void (*func)(mco_coro *co), void *data, void *args);
 MCO_API void mco_await(void (*func)(void *));
 MCO_API void mco_send(void *data);
 MCO_API void *mco_receive(void *data);
-MCO_API void mco_suspend(void);
-MCO_API void mco_wait(void);
+MCO_API mco_result mco_suspend(void);
+MCO_API mco_result mco_wait(void);
 MCO_API mco_coro *mco_active(void);
 
 #ifdef __cplusplus
@@ -1924,12 +1924,12 @@ mco_coro *mco_active() {
   }
 }
 
-void mco_suspend() {
-  mco_yield(mco_active());
+mco_result mco_suspend() {
+  return mco_yield(mco_active());
 }
 
-void mco_wait() {
-  mco_resume(mco_active());
+mco_result mco_wait() {
+  return mco_resume(mco_active());
 }
 
 const char* mco_result_description(mco_result res) {
