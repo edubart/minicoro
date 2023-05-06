@@ -3,6 +3,16 @@
 #include <stdio.h>
 #include <assert.h>
 
+void mco_sendx(void *data)
+{
+    mco_push(mco_running(), &data, sizeof(data));
+}
+
+void mco_suspendx()
+{
+    mco_yield(mco_running());
+}
+
 void simple_for_and_finished(mco_coro *co)
 {
   int i = 0;
@@ -10,26 +20,14 @@ void simple_for_and_finished(mco_coro *co)
   mco_pop(co, &args, sizeof(args));
   for (i = 0; i < 10; ++i)
   {
-    printf("Hello,  acrop_main %d\n", i);
+    printf("Hello, main %d\n", i);
     fflush(stdout);
     args = i;
-    mco_push(co, &args, sizeof(args));
-    mco_yield(co);
+    mco_push(mco_running(), &args, sizeof(args));
+    mco_suspend();
   }
 
   mco_push(co, &args, sizeof(args));
-}
-
-mco_coro *co_create(void (*func)(mco_coro *co), void *any)
-{
-
-  mco_coro *co;
-  mco_desc desc = mco_desc_init(func, 0);
-  desc.user_data = NULL;
-  mco_create(&co, &desc);
-  mco_push(co, &any, sizeof(any));
-  mco_resume(co);
-  return co;
 }
 
 int main()
@@ -37,17 +35,15 @@ int main()
   mco_coro *co;
   int val = 0;
   int k = 0;
-  co = co_create(simple_for_and_finished, &val);
+  co = mco_start(simple_for_and_finished, NULL, &val);
   for (;;) {
     if (k == 10)
     {
       break;
     }
-    mco_resume(co);
+    assert(k == val);
+    mco_wait();
     mco_pop(co, &val, sizeof(val));
-    fflush(stdout);
-    printf("done with k %d\n", k);
-    printf("done with val %d\n", val);
     k += 1;
   }
 
