@@ -214,38 +214,6 @@ extern "C" {
 
 #include <stddef.h> /* for size_t */
 
-#if !defined(thread_local) /* User can override thread_local for obscure compilers */
-  #if !defined(LIBCO_MP) /* Running in single-threaded environment */
-    #define thread_local
-  #else /* Running in multi-threaded environment */
-    #if defined(__STDC__) /* Compiling as C Language */
-      #if defined(_MSC_VER) /* Don't rely on MSVC's C11 support */
-        #define thread_local __declspec(thread)
-      #elif __STDC_VERSION__ < 201112L /* If we are on C90/99 */
-        #if defined(__clang__) || defined(__GNUC__) /* Clang and GCC */
-          #define thread_local __thread
-        #else /* Otherwise, we ignore the directive (unless user provides their own) */
-          #define thread_local
-        #endif
-      #else /* C11 and newer define thread_local in threads.h */
-        #include <threads.h>
-      #endif
-    #elif defined(__cplusplus) /* Compiling as C++ Language */
-      #if __cplusplus < 201103L /* thread_local is a C++11 feature */
-        #if defined(_MSC_VER)
-          #define thread_local __declspec(thread)
-        #elif defined(__clang__) || defined(__GNUC__)
-          #define thread_local __thread
-        #else /* Otherwise, we ignore the directive (unless user provides their own) */
-          #define thread_local
-        #endif
-      #else /* In C++ >= 11, thread_local in a builtin keyword */
-        /* Don't do anything */
-      #endif
-    #endif
-  #endif
-#endif
-
 /* ---------------------------------------------------------------------------------------------- */
 
 /* Coroutine states. */
@@ -294,8 +262,6 @@ struct mco_coro {
   size_t magic_number; /* Used to check stack overflow. */
 };
 
-static thread_local mco_coro main_coro;
-
 /* Structure used to initialize a coroutine. */
 typedef struct mco_desc {
   void (*func)(mco_coro* co); /* Entry point function for the coroutine. */
@@ -337,9 +303,10 @@ MCO_API mco_coro *mco_start(void (*func)(mco_coro *co), void *data, void *args);
 
 MCO_API void mco_await(void (*func)(void *));
 MCO_API void mco_send(void *data);
-MCO_API void *mco_receive(void);
+MCO_API void *mco_receive(void *data);
 MCO_API void mco_suspend(void);
 MCO_API void mco_wait(void);
+MCO_API mco_coro *mco_active(void);
 
 #ifdef __cplusplus
 }
@@ -1919,6 +1886,8 @@ mco_coro* mco_running(void) {
 }
 #endif
 
+static MCO_THREAD_LOCAL mco_coro *main_coro = NULL;
+
 mco_coro *mco_start(void (*func)(mco_coro *co), void *data, void *args) {
   mco_coro *co;
   mco_desc desc = mco_desc_init(func, 0);
@@ -1928,6 +1897,9 @@ mco_coro *mco_start(void (*func)(mco_coro *co), void *data, void *args) {
     mco_push(co, &args, sizeof(args));
   }
   mco_resume(co);
+  if (!main_coro) {
+    main_coro = co;
+  }
   return co;
 }
 
@@ -1936,21 +1908,28 @@ void mco_await(void (*func)(void *)) {
 }
 
 void mco_send(void *data) {
-  mco_push(mco_running(), &data, sizeof(data));
+  mco_push(mco_active(), &data, sizeof(data));
 }
 
-void *mco_receive() {
-  void *data;
-  mco_pop(mco_running(), &data, sizeof(data));
+void *mco_receive(void *data) {
+  mco_pop(mco_active(), &data, sizeof(data));
   return data;
 }
 
+mco_coro *mco_active() {
+  if(mco_status(mco_running()) == MCO_DEAD) {
+    return main_coro;
+  } else {
+    return mco_running();
+  }
+}
+
 void mco_suspend() {
-  mco_yield(mco_running());
+  mco_yield(mco_active());
 }
 
 void mco_wait() {
-  mco_resume(mco_running());
+  mco_resume(mco_active());
 }
 
 const char* mco_result_description(mco_result res) {

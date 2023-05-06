@@ -3,16 +3,6 @@
 #include <stdio.h>
 #include <assert.h>
 
-void mco_sendx(void *data)
-{
-    mco_push(mco_running(), &data, sizeof(data));
-}
-
-void mco_suspendx()
-{
-    mco_yield(mco_running());
-}
-
 void simple_for_and_finished(mco_coro *co)
 {
   int i = 0;
@@ -23,7 +13,7 @@ void simple_for_and_finished(mco_coro *co)
     printf("Hello, main %d\n", i);
     fflush(stdout);
     args = i;
-    mco_push(mco_running(), &args, sizeof(args));
+    mco_push(co, &args, sizeof(args));
     mco_suspend();
   }
 
