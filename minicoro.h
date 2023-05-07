@@ -301,7 +301,7 @@ MCO_API const char* mco_result_description(mco_result res); /* Get the descripti
 /* Initialize and starts the coroutine passing persist data and args. */
 MCO_API mco_coro *mco_start(void (*func)(mco_coro *co), void *data, void *args);
 
-MCO_API void mco_await(void (*func)(void *));
+MCO_API mco_coro *mco_await(void (*func)(void *any), void *args);
 MCO_API void mco_send(void *data);
 MCO_API void *mco_receive(void *data);
 MCO_API mco_result mco_suspend(void);
@@ -1903,8 +1903,23 @@ mco_coro *mco_start(void (*func)(mco_coro *co), void *data, void *args) {
   return co;
 }
 
-void mco_await(void (*func)(void *)) {
-  func(mco_get_user_data(mco_running()));
+typedef struct mco_closure {
+    void (*fn)(void *any);
+    void* args;
+} mco_closure;
+
+static void mco_awaitable(mco_coro *co) {
+  mco_closure *func = (mco_closure *)mco_get_user_data(co);
+
+  if (mco_get_bytes_stored(co) > 0) {
+    mco_pop(co, &func->args, sizeof(func->args));
+  }
+
+  func->fn(func->args);
+}
+
+mco_coro *mco_await(void (*func)(void *any), void *args) {
+  return mco_start(mco_awaitable, &func, &args);
 }
 
 void mco_send(void *data) {
