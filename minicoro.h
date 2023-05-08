@@ -213,6 +213,7 @@ extern "C" {
 #endif
 
 #include <stddef.h> /* for size_t */
+#include <stdarg.h>
 
 /* ---------------------------------------------------------------------------------------------- */
 
@@ -275,6 +276,39 @@ typedef struct mco_desc {
   size_t coro_size;           /* Coroutine structure size. */
   size_t stack_size;          /* Coroutine stack size. */
 } mco_desc;
+
+enum value_args_t {
+    MCO_FUNC,
+    MCO_OBJ,
+    MCO_INT,
+    MCO_FLOAT,
+    MCO_DOUBLE,
+    MCO_BOOL,
+    MCO_CHR,
+    MCO_STR
+};
+
+typedef struct mco_value mco_value_t;
+typedef struct mco_closure {
+    void (*fn)(void *any);
+    void *args;
+} mco_closure_t;
+
+struct mco_value {
+  union value {
+    mco_closure_t function;
+    void *object;
+    int integer;
+    float point;
+    double precision;
+    unsigned char boolean;
+    char *chars;
+    char **strings;
+  };
+  int type;
+  size_t size_args;
+  size_t number_args;
+};
 
 /* Coroutine functions. */
 MCO_API mco_desc mco_desc_init(void (*func)(mco_coro* co), size_t stack_size);  /* Initialize description of a coroutine. When stack size is 0 then MCO_DEFAULT_STACK_SIZE is used. */
@@ -1903,16 +1937,13 @@ mco_coro *mco_start(void (*func)(mco_coro *co), void *data, void *args) {
   return co;
 }
 
-typedef struct mco_closure {
-    void (*fn)(void *any);
-    void* args;
-} mco_closure;
-
 static void mco_awaitable(mco_coro *co) {
-  mco_closure *func = (mco_closure *)mco_get_user_data(co);
+  mco_closure_t *func = (mco_closure_t *)mco_get_user_data(co);
+  mco_value_t *args = NULL;
 
   if (mco_get_bytes_stored(co) > 0) {
-    mco_pop(co, &func->args, sizeof(func->args));
+    mco_pop(co, &args, sizeof(args));
+    &func->args = args;
   }
 
   func->fn(func->args);
