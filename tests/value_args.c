@@ -28,11 +28,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-void co_entrypoint(void *args)
+void co_entrypoint(void *args, ...)
 {
-    int param_y;
+    int param_y = mco_value(args).integer;
 
-    mco_pop(mco_active(), &param_y, sizeof(param_y));
     printf("co_entrypoint(%d)\n", param_y);
     mco_push(mco_active(), &param_y, sizeof(param_y));
     mco_suspend();

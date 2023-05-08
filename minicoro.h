@@ -285,17 +285,16 @@ enum value_args_t {
     MCO_DOUBLE,
     MCO_BOOL,
     MCO_CHR,
-    MCO_STR
+    MCO_ARRAY
 };
 
 typedef struct mco_value mco_value_t;
 typedef struct mco_closure {
-    void (*fn)(void *any);
+    void (*fn)(void *any, ...);
     void *args;
 } mco_closure_t;
 
-struct mco_value {
-  union value {
+typedef union {
     mco_closure_t function;
     void *object;
     int integer;
@@ -303,8 +302,11 @@ struct mco_value {
     double precision;
     unsigned char boolean;
     char *chars;
-    char **strings;
-  };
+    char **array;
+}  value_t;
+
+struct mco_value {
+  value_t value;
   int type;
   size_t size_args;
   size_t number_args;
@@ -335,9 +337,10 @@ MCO_API const char* mco_result_description(mco_result res); /* Get the descripti
 /* Initialize and starts the coroutine passing persist data and args. */
 MCO_API mco_coro *mco_start(void (*func)(mco_coro *co), void *data, void *args);
 
-MCO_API mco_coro *mco_await(void (*func)(void *any), void *args);
+MCO_API mco_coro *mco_await(void (*func)(void *any, ...), void *args, ...);
 MCO_API void mco_send(void *data);
-MCO_API void *mco_receive(void *data);
+MCO_API value_t mco_receive(void *data);
+MCO_API value_t mco_value(void *data);
 MCO_API mco_result mco_suspend(void);
 MCO_API mco_result mco_wait(void);
 MCO_API mco_coro *mco_active(void);
@@ -1940,16 +1943,21 @@ mco_coro *mco_start(void (*func)(mco_coro *co), void *data, void *args) {
 static void mco_awaitable(mco_coro *co) {
   mco_closure_t *func = (mco_closure_t *)mco_get_user_data(co);
   mco_value_t *args = NULL;
+  size_t store = mco_get_bytes_stored(co);
 
-  if (mco_get_bytes_stored(co) > 0) {
+  if (store > 0) {
+    args = (mco_value_t *)malloc(sizeof(mco_value_t));
     mco_pop(co, &args, sizeof(args));
-    &func->args = args;
+    func->args = args;
   }
 
-  func->fn(func->args);
+  func->fn(func->args, NULL);
+  if(store > 0 && mco_status(mco_running()) == MCO_DEAD) {
+    free(args);
+  }
 }
 
-mco_coro *mco_await(void (*func)(void *any), void *args) {
+mco_coro *mco_await(void (*func)(void *any, ...), void *args, ...) {
   return mco_start(mco_awaitable, &func, &args);
 }
 
@@ -1957,9 +1965,13 @@ void mco_send(void *data) {
   mco_push(mco_active(), &data, sizeof(data));
 }
 
-void *mco_receive(void *data) {
+value_t mco_receive(void *data) {
   mco_pop(mco_active(), &data, sizeof(data));
-  return data;
+  return mco_value(data);
+}
+
+value_t mco_value(void *data) {
+  return ((mco_value_t *)data)->value;
 }
 
 mco_coro *mco_active() {
