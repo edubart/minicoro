@@ -39,8 +39,6 @@ jobs:
             arch: armv7
           - target: aarch64
             arch: aarch64
-          - target: ppc64v2
-            arch: ppc64le
     steps:
       - uses: actions/checkout@v3
       - uses: uraimo/run-on-arch-action@v2
@@ -72,11 +70,12 @@ jobs:
       - name: Build
         working-directory: tests
         run: |
-            cl /I .. coro_timing.c
             cl /I .. testsuite.c
             cl /I .. example.c
             cl /I .. mt-example.c
             cl /I .. simple.c
+            cl /I .. coro_timing.c
+            cl /I .. benchmark.c
       - name: Test
         working-directory: tests
         run: |
@@ -85,3 +84,4 @@ jobs:
             .\mt-example.exe
             .\simple.exe
             .\coro_timing.exe
+            .\benchmark.exe
