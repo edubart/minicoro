@@ -26,7 +26,7 @@ WASMTIME=wasmtime
 # OUTEXT=.exe
 # RUNNER=
 
-all: testsuite example mt-example simple benchmark
+all: testsuite example mt-example simple benchmark coro_timing
 
 test: testsuite
 	$(RUNNER) ./testsuite$(OUTEXT)
@@ -34,17 +34,21 @@ test: testsuite
 test-example: example
 	$(RUNNER) ./example$(OUTEXT)
 
-test-all: testsuite example mt-example simple
+test-all: testsuite example mt-example simple coro_timing
 	$(RUNNER) ./testsuite$(OUTEXT)
 	$(RUNNER) ./example$(OUTEXT)
 	$(RUNNER) ./mt-example$(OUTEXT)
 	$(RUNNER) ./simple$(OUTEXT)
+	$(RUNNER) ./coro_timing$(OUTEXT)
 
 bench: benchmark
 	./benchmark$(OUTEXT)
 
 testsuite: testsuite.c ../minicoro.h Makefile
 	$(CC) testsuite.c -o testsuite $(EXTRA_CFLAGS) $(CFLAGS)
+
+coro_timing: coro_timing.c ../minicoro.h Makefile
+	$(CC) coro_timing.c -o coro_timing $(EXTRA_CFLAGS) $(CFLAGS)
 
 example: example.c ../minicoro.h Makefile
 	$(CC) example.c -o example $(EXTRA_CFLAGS) $(CFLAGS)
@@ -59,7 +63,7 @@ benchmark: benchmark.c ../minicoro.h Makefile
 	$(CC) benchmark.c -o benchmark $(EXTRA_CFLAGS) $(CFLAGS) $(RELEASE_CFLAGS) -std=c99
 
 clean:
-	rm -f testsuite$(OUTEXT) example$(OUTEXT) mt-example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT)
+	rm -f testsuite$(OUTEXT) example$(OUTEXT) mt-example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT) coro_timing$(OUTEXT)
 
 test-riscv64:
 	$(MAKE) --no-print-directory CC=riscv64-elf-gcc CFLAGS="-march=rv64gc -mabi=lp64d" RUNNER=qemu-riscv64 clean test test-example
