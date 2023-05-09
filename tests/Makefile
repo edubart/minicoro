@@ -26,7 +26,7 @@ WASMTIME=wasmtime
 # OUTEXT=.exe
 # RUNNER=
 
-all: testsuite example mt-example simple benchmark simple_args value_args
+all: testsuite example mt-example simple benchmark simple_args value_args to_coro_timing
 
 test: testsuite
 	$(RUNNER) ./testsuite$(OUTEXT)
@@ -36,6 +36,7 @@ test-example: example
 
 test-all: testsuite example mt-example simple
 	$(RUNNER) ./testsuite$(OUTEXT)
+	$(RUNNER) ./to_coro_timing$(OUTEXT)
 	$(RUNNER) ./simple_args$(OUTEXT)
 	$(RUNNER) ./value_args$(OUTEXT)
 	$(RUNNER) ./example$(OUTEXT)
@@ -47,6 +48,9 @@ bench: benchmark
 
 testsuite: testsuite.c ../minicoro.h Makefile
 	$(CC) testsuite.c -o testsuite $(EXTRA_CFLAGS) $(CFLAGS)
+
+to_coro_timing: to_coro_timing.c ../minicoro.h Makefile
+	$(CC) to_coro_timing.c -o to_coro_timing $(EXTRA_CFLAGS) $(CFLAGS)
 
 value_args: value_args.c ../minicoro.h Makefile
 	$(CC) value_args.c -o value_args $(EXTRA_CFLAGS) $(CFLAGS)
