@@ -34,7 +34,7 @@ test: testsuite
 test-example: example
 	$(RUNNER) ./example$(OUTEXT)
 
-test-all: testsuite example mt-example simple
+test-all: testsuite example mt-example simple simple_args value_args
 	$(RUNNER) ./testsuite$(OUTEXT)
 	$(RUNNER) ./to_coro_timing$(OUTEXT)
 	$(RUNNER) ./simple_args$(OUTEXT)
@@ -71,7 +71,7 @@ benchmark: benchmark.c ../minicoro.h Makefile
 	$(CC) benchmark.c -o benchmark $(EXTRA_CFLAGS) $(CFLAGS) $(RELEASE_CFLAGS) -std=c99
 
 clean:
-	rm -f testsuite$(OUTEXT) example$(OUTEXT) mt-example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT) simple_args$(OUTEXT) value_args$(OUTEXT)
+	rm -f testsuite$(OUTEXT) example$(OUTEXT) mt-example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT) simple_args$(OUTEXT) value_args$(OUTEXT) to_coro_timing$(OUTEXT)
 
 test-riscv64:
 	$(MAKE) --no-print-directory CC=riscv64-elf-gcc CFLAGS="-march=rv64gc -mabi=lp64d" RUNNER=qemu-riscv64 clean test test-example

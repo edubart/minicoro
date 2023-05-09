@@ -1,0 +1,93 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: amd64
+            flags: -O3 -fomit-frame-pointer
+          - target: x86
+            flags: -m32 -O3 -fomit-frame-pointer
+    steps:
+      - uses: actions/checkout@v3
+      - name: Prepare
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -q -y
+          sudo apt-get install -y gcc-multilib g++-multilib valgrind libc6-dbg libc6-dbg:i386
+      - name: Build
+        working-directory: tests
+        run: make
+      - name: Test
+        working-directory: tests
+        run: make test-all
+
+  build-qemu:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: arm
+            arch: armv7
+          - target: aarch64
+            arch: aarch64
+          - target: ppc64v2
+            arch: ppc64le
+    steps:
+      - uses: actions/checkout@v3
+      - uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: ${{ matrix.arch }}
+          distro: ubuntu_latest
+          install: |
+            apt-get update -q -y
+            apt-get install -q -y --no-install-recommends build-essential valgrind
+          env: |
+            target: ${{ matrix.target }}
+          run: |
+            cd tests
+            make
+            make test-all
+
+  build-windows:
+    name: Windows (${{ matrix.arch }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, x86]
+    steps:
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: actions/checkout@v3
+      - name: Build
+        working-directory: tests
+        run: |
+            cl /I .. to_coro_timing.c
+            cl /I .. testsuite.c
+            cl /I .. to_coro_timing.c
+            cl /I .. simple_args.c
+            cl /I .. value_args.c
+            cl /I .. example.c
+            cl /I .. mt-example.c
+            cl /I .. simple.c
+      - name: Test
+        working-directory: test
+        run: |
+            testsuite.exe
+            to_coro_timing.exe
+            simple_args.exe
+            value_args.exe
+            example.exe
+            mt-example.exe
+            simple.exe
+            to_coro_timing.exe
