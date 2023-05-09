@@ -75,7 +75,6 @@ jobs:
             cl /I .. mt-example.c
             cl /I .. simple.c
             cl /I .. coro_timing.c
-            cl /I .. benchmark.c
       - name: Test
         working-directory: tests
         run: |
@@ -84,4 +83,3 @@ jobs:
             .\mt-example.exe
             .\simple.exe
             .\coro_timing.exe
-            .\benchmark.exe
