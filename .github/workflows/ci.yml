@@ -74,17 +74,15 @@ jobs:
         run: |
             cl /I .. to_coro_timing.c
             cl /I .. testsuite.c
-            cl /I .. to_coro_timing.c
             cl /I .. simple_args.c
             cl /I .. value_args.c
             cl /I .. example.c
             cl /I .. mt-example.c
             cl /I .. simple.c
       - name: Test
-        working-directory: test
+        working-directory: tests
         run: |
             testsuite.exe
-            to_coro_timing.exe
             simple_args.exe
             value_args.exe
             example.exe
