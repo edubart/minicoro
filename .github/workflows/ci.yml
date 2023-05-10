@@ -83,3 +83,14 @@ jobs:
             .\mt-example.exe
             .\simple.exe
             .\coro_timing.exe
+
+  sanitizers:
+    name: Linux full - thread, undefined, leak, address
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build and run sanitizer tests
+        working-directory: tests
+        run: make test-linux-full
