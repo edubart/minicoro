@@ -34,8 +34,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: arm
-            arch: armv7
           - target: aarch64
             arch: aarch64
     steps:
