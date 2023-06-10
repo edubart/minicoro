@@ -91,6 +91,10 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
+      - name: Prepare
+        run: |
+          sudo apt-get update -q -y
+          sudo apt-get install -y gcc-multilib g++-multilib valgrind libc6-dbg
       - name: Build and run sanitizer tests
         working-directory: tests
         run: make test-linux-full
