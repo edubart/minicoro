@@ -15,6 +15,7 @@ The library assembly implementation is inspired by [Lua Coco](https://coco.luaji
 - Supports custom allocators.
 - Storage system to allow passing values between yield and resume.
 - Customizable stack size.
+- Supports growable stacks and low memory footprint when enabling the virtual memory allocator.
 - Coroutine API design inspired by Lua with C use in mind.
 - Yield across any C function.
 - Made to work in multithread applications.
@@ -50,12 +51,13 @@ to create, resume, yield or destroy a coroutine.
 
 # Caveats
 
-- Don't use coroutines with C++ exceptions, this is not supported.
+- Avoid using coroutines with C++ exceptions, this is not recommended, it may not behave as you expect.
 - When using C++ RAII (i.e. destructors) you must resume the coroutine until it dies to properly execute all destructors.
-- To use in multithread applications, you must compile with C compiler that supports `thread_local` qualifier.
 - Some unsupported sanitizers for C may trigger false warnings when using coroutines.
-- The `mco_coro` object is not thread safe, you should lock each coroutine into a thread.
-- Stack space is fixed, it cannot grow. By default it has about 56KB of space, this can be changed on coroutine creation.
+- The `mco_coro` object is not thread safe, you should use a mutex for manipulating it in multithread applications.
+- To use in multithread applications, you must compile with C compiler that supports `thread_local` qualifier.
+- Avoid using `thread_local` inside coroutine code, the compiler may cache thread local variables pointers which can be invalid when a coroutine switch threads.
+- Stack space is limited. By default it has 56KB of space, this can be changed on coroutine creation, or by enabling the virtual memory backed allocator to make it 2040KB.
 - Take care to not cause stack overflows (run out of stack space), otherwise your program may crash or not, the behavior is undefined.
 - On WebAssembly you must compile with Emscripten flag `-s ASYNCIFY=1`.
 - The WebAssembly Binaryen asyncify method can be used when explicitly enabled,
@@ -87,7 +89,7 @@ you can  optionally set `user_data` on its creation and later retrieve with `mco
 
 To pass values between resume and yield,
 you can optionally use `mco_push` and `mco_pop` APIs,
-they are intended to pass temporary values using a LIFO (Last In, First Out) style buffer.
+they are intended to pass temporary values using a LIFO style buffer.
 The storage system can also be used to send and receive initial values on coroutine creation or before it finishes.
 
 # Usage
@@ -109,6 +111,7 @@ The following simple example demonstrates on how to use the library:
 #define MINICORO_IMPL
 #include "minicoro.h"
 #include <stdio.h>
+#include <assert.h>
 
 // Coroutine entry function.
 void coro_entry(mco_coro* co) {
@@ -169,21 +172,61 @@ an error.
 The library return error codes in most of its API in case of misuse or system error,
 the user is encouraged to handle them properly.
 
+## Virtual memory backed allocator
+
+The new compile time option `MCO_USE_VMEM_ALLOCATOR` enables a virtual memory backed allocator.
+
+Every stackful coroutine usually have to reserve memory for its full stack,
+this typically makes the total memory usage very high when allocating thousands of coroutines,
+for example, an application with 100 thousands coroutine with stacks of 56KB would consume as high
+as 5GB of memory, however your application may not really full stack usage for every coroutine.
+
+Some developers often prefer stackless coroutines over stackful coroutines
+because of this problem, stackless memory footprint is low, therefore often considered more lightweight.
+However stackless have many other limitations, like you cannot run unconstrained code inside them.
+
+One remedy to the solution is to make stackful coroutines growable,
+to only use physical memory on demand when its really needed,
+and there is a nice way to do this relying on virtual memory allocation
+when supported by the operating system.
+
+The virtual memory backed allocator will reserve virtual memory in the OS for each coroutine stack,
+but not trigger real physical memory usage yet.
+While the application virtual memory usage will be high,
+the physical memory usage will be low and actually grow on demand (usually every 4KB chunk in Linux).
+
+The virtual memory backed allocator also raises the default stack size to about 2MB,
+typically the size of extra threads in Linux,
+so you have more space in your coroutines and the risk of stack overflow is low.
+
+As an example, allocating 100 thousands coroutines with nearly 2MB stack reserved space
+with the virtual memory allocator uses 783MB of physical memory usage, that is about 8KB per coroutine,
+however the virtual memory usage will be at 98GB.
+
+It is recommended to enable this option only if you plan to spawn thousands of coroutines
+while wanting to have a low memory footprint.
+Not all environments have an OS with virtual memory support, therefore this option is disabled by default.
+
+This option may add an order of magnitude overhead to `mco_create()`/`mco_destroy()`,
+because they will request the OS to manage virtual memory page tables,
+if this is a problem for you, please customize a custom allocator for your own needs.
+
 ## Library customization
 
 The following can be defined to change the library behavior:
 
 - `MCO_API`                   - Public API qualifier. Default is `extern`.
-- `MCO_MIN_STACK_SIZE`        - Minimum stack size when creating a coroutine. Default is 32768.
+- `MCO_MIN_STACK_SIZE`        - Minimum stack size when creating a coroutine. Default is 32768 (32KB).
 - `MCO_DEFAULT_STORAGE_SIZE`  - Size of coroutine storage buffer. Default is 1024.
-- `MCO_DEFAULT_STACK_SIZE`    - Default stack size when creating a coroutine. Default is 57344.
-- `MCO_MALLOC`                - Default allocation function. Default is `malloc`.
-- `MCO_FREE`                  - Default deallocation function. Default is `free`.
+- `MCO_DEFAULT_STACK_SIZE`    - Default stack size when creating a coroutine. Default is 57344 (56KB). When `MCO_USE_VMEM_ALLOCATOR` is true the default is 2040KB (nearly 2MB).
+- `MCO_ALLOC`                 - Default allocation function. Default is `calloc`.
+- `MCO_DEALLOC`               - Default deallocation function. Default is `free`.
+- `MCO_USE_VMEM_ALLOCATOR`    - Use virtual memory backed allocator, improving memory footprint per coroutine.
+- `MCO_NO_DEFAULT_ALLOCATOR`  - Disable the default allocator using `MCO_ALLOC` and `MCO_DEALLOC`.
+- `MCO_ZERO_MEMORY`           - Zero memory of stack when poping storage, intended for garbage collected environments.
 - `MCO_DEBUG`                 - Enable debug mode, logging any runtime error to stdout. Defined automatically unless `NDEBUG` or `MCO_NO_DEBUG` is defined.
 - `MCO_NO_DEBUG`              - Disable debug mode.
 - `MCO_NO_MULTITHREAD`        - Disable multithread usage. Multithread is supported when `thread_local` is supported.
-- `MCO_NO_DEFAULT_ALLOCATORS` - Disable the default allocator using `MCO_MALLOC` and `MCO_FREE`.
-- `MCO_ZERO_MEMORY`           - Zero memory of stack for new coroutines and when poping storage, intended for garbage collected environments.
 - `MCO_USE_ASM`               - Force use of assembly context switch implementation.
 - `MCO_USE_UCONTEXT`          - Force use of ucontext context switch implementation.
 - `MCO_USE_FIBERS`            - Force use of fibers context switch implementation.
@@ -214,9 +257,9 @@ typedef struct mco_desc {
   void (*func)(mco_coro* co); /* Entry point function for the coroutine. */
   void* user_data;            /* Coroutine user data, can be get with `mco_get_user_data`. */
   /* Custom allocation interface. */
-  void* (*malloc_cb)(size_t size, void* allocator_data); /* Custom allocation function. */
-  void  (*free_cb)(void* ptr, void* allocator_data);     /* Custom deallocation function. */
-  void* allocator_data;       /* User data pointer passed to `malloc`/`free` allocation functions. */
+  void* (*alloc_cb)(size_t size, void* allocator_data); /* Custom allocation function. */
+  void  (*dealloc_cb)(void* ptr, size_t size, void* allocator_data);     /* Custom deallocation function. */
+  void* allocator_data;       /* User data pointer passed to `alloc`/`dealloc` allocation functions. */
   size_t storage_size;        /* Coroutine storage size, to be used with the storage APIs. */
   /* These must be initialized only through `mco_init_desc`. */
   size_t coro_size;           /* Coroutine structure size. */
@@ -254,6 +297,7 @@ The following is a more complete example, generating Fibonacci numbers:
 #define MINICORO_IMPL
 #include "minicoro.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 static void fail(const char* message, mco_result res) {
   printf("%s: %s\n", message, mco_result_description(res));
@@ -326,6 +370,8 @@ int main() {
 
 # Updates
 
+- **15-Nov-2022**: Introduce `MCO_USE_VMEM_ALLOCATOR` option for allocating thousands of coroutines with low memory footprint, this include breaking changes in the allocator API.
+- **7-Jan-2023**: Fix 128-bit XMM registers not being fully saved on Windows.
 - **08-Jun-2022**: Minicoro has been awarded by the [Icculus Microgrant 2021](https://icculus.org/microgrant/), thanks @icculus for supporting open source work.
 - **26-Jan-2022**: Added support for WebAssembly outside the WebBrowser using Binaryen asyncify pass.
 - **01-Sep-2021**: Added support for DOSBox (MS-DOS Emulator).

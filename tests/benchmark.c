@@ -66,8 +66,28 @@ void bench_init() {
   printf("uninit cycles %.1f\n", uninit_cycles / (double)(INIT_ITERATIONS));
 }
 
+void bench_create() {
+  mco_desc desc = mco_desc_init(coro_entry, 0);
+  uint64_t create_cycles = 0;
+  uint64_t destroy_cycles = 0;
+  uint64_t start;
+  for(int i=0;i<INIT_ITERATIONS;++i) {
+    start = rdtsc();
+    mco_coro* co = NULL;
+    mco_create(&co, &desc);
+    create_cycles += rdtsc() - start;
+
+    start = rdtsc();
+    mco_destroy(co);
+    destroy_cycles += rdtsc() - start;
+  }
+  printf("create cycles %.1f\n", create_cycles / (double)(INIT_ITERATIONS));
+  printf("destroy cycles %.1f\n", destroy_cycles / (double)(INIT_ITERATIONS));
+}
+
 int main() {
   bench_switch();
   bench_init();
+  bench_create();
   return 0;
 }

@@ -1,6 +1,7 @@
 #define MINICORO_IMPL
 #include "minicoro.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 static void fail(const char* message, mco_result res) {
   printf("%s: %s\n", message, mco_result_description(res));

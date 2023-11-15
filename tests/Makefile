@@ -26,7 +26,7 @@ WASMTIME=wasmtime
 # OUTEXT=.exe
 # RUNNER=
 
-all: testsuite example mt-example simple benchmark
+all: testsuite example mt-example simple benchmark mem-stress
 
 test: testsuite
 	$(RUNNER) ./testsuite$(OUTEXT)
@@ -57,6 +57,9 @@ simple: simple.c ../minicoro.h Makefile
 
 benchmark: benchmark.c ../minicoro.h Makefile
 	$(CC) benchmark.c -o benchmark $(EXTRA_CFLAGS) $(CFLAGS) $(RELEASE_CFLAGS) -std=c99
+
+mem-stress: mem-stress.c ../minicoro.h Makefile
+	$(CC) mem-stress.c -o mem-stress $(EXTRA_CFLAGS) $(CFLAGS) -std=gnu11
 
 clean:
 	rm -f testsuite$(OUTEXT) example$(OUTEXT) mt-example$(OUTEXT) simple$(OUTEXT) benchmark$(OUTEXT)
