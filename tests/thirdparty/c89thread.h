@@ -69,10 +69,27 @@ using pthreads, you may need to link with `-lpthread`.
 extern "C" {
 #endif
 
-#if defined(__LP64__) || defined(_WIN64) || (defined(__x86_64__) && !defined(__ILP32__)) || defined(_M_X64) || defined(__ia64) || defined (_M_IA64) || defined(__aarch64__) || defined(__powerpc64__)
-    typedef long long c89thread_intptr;
+typedef signed   int c89thread_int32;
+typedef unsigned int c89thread_uint32;
+#if defined(__clang__) || (defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)))
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wlong-long"
+    #if defined(__clang__)
+        #pragma GCC diagnostic ignored "-Wc++11-long-long"
+    #endif
+#endif
+typedef signed   long long c89thread_int64;
+typedef unsigned long long c89thread_uint64;
+#if defined(__clang__) || (defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)))
+    #pragma GCC diagnostic pop
+#endif
+
+#if defined(__LP64__) || defined(_WIN64) || (defined(__x86_64__) && !defined(__ILP32__)) || defined(_M_X64) || defined(__ia64) || defined(_M_IA64) || defined(__aarch64__) || defined(__powerpc64__)
+    typedef c89thread_int64  c89thread_intptr;
+    typedef c89thread_uint64 c89thread_uintptr;
 #else
-    typedef int c89thread_intptr;
+    typedef c89thread_int32  c89thread_intptr;
+    typedef c89thread_uint32 c89thread_uintptr;
 #endif
 typedef void* c89thread_handle;
 
@@ -117,7 +134,16 @@ typedef void* c89thread_handle;
         #endif
     #endif
 
-    #include <pthread.h>
+    #ifndef C89THREAD_NO_PTHREAD_IN_HEADER
+        #include <pthread.h>
+        typedef pthread_t           c89thread_pthread_t;
+        typedef pthread_mutex_t     c89thread_pthread_mutex_t;
+        typedef pthread_cond_t      c89thread_pthread_cond_t;
+    #else
+        typedef c89thread_uintptr   c89thread_pthread_t;
+        typedef union               c89thread_pthread_mutex_t { char __data[40]; c89thread_uint64 __alignment; } c89thread_pthread_mutex_t;
+        typedef union               c89thread_pthread_cond_t  { char __data[48]; c89thread_uint64 __alignment; } c89thread_pthread_cond_t;
+    #endif
 #endif
 
 #include <time.h>   /* For timespec. */
@@ -146,33 +172,37 @@ enum
 
 
 /* Memory Management. */
-typedef enum
-{
-    c89thread_allocation_type_general = 0
-} c89thread_allocation_type;
-
 typedef struct
 {
     void* pUserData;
-    void* (* onMalloc)(size_t sz, c89thread_allocation_type type, void* pUserData);
-    void  (* onFree)(void* p, c89thread_allocation_type type, void* pUserData);
+    void* (* onMalloc)(size_t sz, void* pUserData);
+    void* (* onRealloc)(void* p, size_t sz, void* pUserData);
+    void  (* onFree)(void* p, void* pUserData);
 } c89thread_allocation_callbacks;
 
 void c89thread_set_allocation_callbacks(const c89thread_allocation_callbacks* pCallbacks);
-void* c89thread_malloc(size_t sz, c89thread_allocation_type type, const c89thread_allocation_callbacks* pCallbacks);
-void  c89thread_free(void* p, c89thread_allocation_type type, const c89thread_allocation_callbacks* pCallbacks);
+void* c89thread_malloc(size_t sz, const c89thread_allocation_callbacks* pCallbacks);
+void* c89thread_realloc(void* p, size_t sz, const c89thread_allocation_callbacks* pCallbacks);
+void  c89thread_free(void* p, const c89thread_allocation_callbacks* pCallbacks);
 
 
 /* thrd_t */
 #if defined(C89THREAD_WIN32)
 typedef c89thread_handle    c89thrd_t;  /* HANDLE, CreateThread() */
 #else
-typedef pthread_t           c89thrd_t;
+typedef c89thread_pthread_t c89thrd_t;
 #endif
 
 typedef int (* c89thrd_start_t)(void*);
 
-int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89thread_allocation_callbacks* pAllocationCallbacks);
+typedef struct
+{
+    void* pUserData;
+    void (* onEntry)(void* pUserData);
+    void (* onExit)(void* pUserData);
+} c89thread_entry_exit_callbacks;
+
+int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89thread_entry_exit_callbacks* pEntryExitCallbacks, const c89thread_allocation_callbacks* pAllocationCallbacks);
 int c89thrd_create(c89thrd_t* thr, c89thrd_start_t func, void* arg);
 int c89thrd_equal(c89thrd_t lhs, c89thrd_t rhs);
 c89thrd_t c89thrd_current(void);
@@ -191,7 +221,7 @@ typedef struct
     int type;
 } c89mtx_t;
 #else
-typedef pthread_mutex_t c89mtx_t;
+typedef c89thread_pthread_mutex_t c89mtx_t;
 #endif
 
 enum
@@ -212,9 +242,9 @@ int c89mtx_unlock(c89mtx_t* mutex);
 /* cnd_t */
 #if defined(C89THREAD_WIN32)
 /* Not implemented. */
-typedef void*           c89cnd_t;
+typedef void*                    c89cnd_t;
 #else
-typedef pthread_cond_t  c89cnd_t;
+typedef c89thread_pthread_cond_t c89cnd_t;
 #endif
 
 int c89cnd_init(c89cnd_t* cnd);
@@ -233,8 +263,8 @@ typedef struct
 {
     int value;
     int valueMax;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
+    c89thread_pthread_mutex_t lock;
+    c89thread_pthread_cond_t cond;
 } c89sem_t;
 #endif
 
@@ -252,8 +282,8 @@ typedef c89thread_handle c89evnt_t;
 typedef struct
 {
     int value;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
+    c89thread_pthread_mutex_t lock;
+    c89thread_pthread_cond_t cond;
 } c89evnt_t;
 #endif
 
@@ -298,11 +328,15 @@ Implementation
 #include <limits.h> /* For LONG_MAX */
 
 #ifndef C89THREAD_MALLOC
-#define C89THREAD_MALLOC(sz)    HeapAlloc(GetProcessHeap(), 0, (sz))
+#define C89THREAD_MALLOC(sz)        HeapAlloc(GetProcessHeap(), 0, (sz))
+#endif
+
+#ifndef C89THREAD_REALLOC
+#define C89THREAD_REALLOC(p, sz)    (((sz) > 0) ? ((p) ? HeapReAlloc(GetProcessHeap(), 0, (p), (sz)) : HeapAlloc(GetProcessHeap(), 0, (sz))) : ((VOID*)(size_t)(HeapFree(GetProcessHeap(), 0, (p)) & 0)))
 #endif
 
 #ifndef C89THREAD_FREE
-#define C89THREAD_FREE(p)       HeapFree(GetProcessHeap(), 0, (p))
+#define C89THREAD_FREE(p)           HeapFree(GetProcessHeap(), 0, (p))
 #endif
 
 static int c89thrd_result_from_GetLastError(DWORD error)
@@ -342,6 +376,7 @@ typedef struct
 {
     c89thrd_start_t func;
     void* arg;
+    c89thread_entry_exit_callbacks entryExitCallbacks;
     c89thread_allocation_callbacks allocationCallbacks;
     int usingCustomAllocator;
 } c89thrd_start_data_win32;
@@ -349,20 +384,33 @@ typedef struct
 static unsigned long WINAPI c89thrd_start_win32(void* pUserData)
 {
     c89thrd_start_data_win32* pStartData = (c89thrd_start_data_win32*)pUserData;
+    c89thread_entry_exit_callbacks entryExitCallbacks;
     c89thrd_start_t func;
     void* arg;
+    unsigned long result;
+
+    entryExitCallbacks = pStartData->entryExitCallbacks;
+    if (entryExitCallbacks.onEntry != NULL) {
+        entryExitCallbacks.onEntry(entryExitCallbacks.pUserData);
+    }
 
     /* Make sure we make a copy of the start data here. That way we can free pStartData straight away (it was allocated in c89thrd_create()). */
     func = pStartData->func;
     arg  = pStartData->arg;
 
     /* We should free the data pointer before entering into the start function. That way when c89thrd_exit() is called we don't leak. */
-    c89thread_free(pStartData, c89thread_allocation_type_general, (pStartData->usingCustomAllocator) ? NULL : &pStartData->allocationCallbacks);
+    c89thread_free(pStartData, (pStartData->usingCustomAllocator) ? NULL : &pStartData->allocationCallbacks);
 
-    return (unsigned long)func(arg);
+    result = (unsigned long)func(arg);
+
+    if (entryExitCallbacks.onExit != NULL) {
+        entryExitCallbacks.onExit(entryExitCallbacks.pUserData);
+    }
+
+    return result;
 }
 
-int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89thread_allocation_callbacks* pAllocationCallbacks)
+int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89thread_entry_exit_callbacks* pEntryExitCallbacks, const c89thread_allocation_callbacks* pAllocationCallbacks)
 {
     HANDLE hThread;
     c89thrd_start_data_win32* pData;    /* <-- Needs to be allocated on the heap to ensure the data doesn't get trashed before the thread is entered. */
@@ -377,7 +425,7 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
         return c89thrd_error;
     }
 
-    pData = (c89thrd_start_data_win32*)c89thread_malloc(sizeof(*pData), c89thread_allocation_type_general, pAllocationCallbacks);   /* <-- This will be freed when c89thrd_start_win32() is entered. */
+    pData = (c89thrd_start_data_win32*)c89thread_malloc(sizeof(*pData), pAllocationCallbacks);   /* <-- This will be freed when c89thrd_start_win32() is entered. */
     if (pData == NULL) {
         return c89thrd_nomem;
     }
@@ -385,11 +433,20 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
     pData->func = func;
     pData->arg  = arg;
 
+    if (pEntryExitCallbacks != NULL) {
+        pData->entryExitCallbacks = *pEntryExitCallbacks;
+    } else {
+        pData->entryExitCallbacks.onEntry   = NULL;
+        pData->entryExitCallbacks.onExit    = NULL;
+        pData->entryExitCallbacks.pUserData = NULL;
+    }
+
     if (pAllocationCallbacks != NULL) {
         pData->allocationCallbacks  = *pAllocationCallbacks;
         pData->usingCustomAllocator = 1;
     } else {
         pData->allocationCallbacks.onMalloc  = NULL;
+        pData->allocationCallbacks.onRealloc = NULL;
         pData->allocationCallbacks.onFree    = NULL;
         pData->allocationCallbacks.pUserData = NULL;
         pData->usingCustomAllocator = 0;
@@ -397,7 +454,7 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
 
     hThread = CreateThread(NULL, 0, c89thrd_start_win32, pData, 0, NULL);
     if (hThread == NULL) {
-        c89thread_free(pData, c89thread_allocation_type_general, pAllocationCallbacks);
+        c89thread_free(pData, pAllocationCallbacks);
         return c89thrd_result_from_GetLastError(GetLastError());
     }
 
@@ -408,7 +465,7 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
 
 int c89thrd_create(c89thrd_t* thr, c89thrd_start_t func, void* arg)
 {
-    return c89thrd_create_ex(thr, func, arg, NULL);
+    return c89thrd_create_ex(thr, func, arg, NULL, NULL);
 }
 
 int c89thrd_equal(c89thrd_t lhs, c89thrd_t rhs)
@@ -481,7 +538,7 @@ int c89thrd_sleep(const struct timespec* duration, struct timespec* remaining)
 
     /*
     A small, but important detail here. The C11 spec states that thrd_sleep() should sleep for a
-    *minium* of the specified duration. In the above calculation we converted nanoseconds to
+    *minimum* of the specified duration. In the above calculation we converted nanoseconds to
     milliseconds, however this requires a division which may truncate a non-zero sub-millisecond
     amount of time. We need to add an extra millisecond to meet the minimum duration requirement if
     indeed we truncated.
@@ -964,16 +1021,21 @@ int c89evnt_signal(c89evnt_t* evnt)
 
 /* POSIX */
 #if defined(C89THREAD_POSIX)
-#include <stdlib.h> /* For malloc(), free(). */
-#include <errno.h>  /* For errno_t. */
+#include <pthread.h>
+#include <stdlib.h>     /* For malloc(), realloc(), free(). */
+#include <errno.h>      /* For errno_t. */
 #include <sys/time.h>   /* For timeval. */
 
 #ifndef C89THREAD_MALLOC
-#define C89THREAD_MALLOC(sz)    malloc(sz)
+#define C89THREAD_MALLOC(sz)        malloc(sz)
+#endif
+
+#ifndef C89THREAD_REALLOC
+#define C89THREAD_REALLOC(p, sz)    realloc(p, sz)
 #endif
 
 #ifndef C89THREAD_FREE
-#define C89THREAD_FREE(p)       free(p)
+#define C89THREAD_FREE(p)           free(p)
 #endif
 
 
@@ -996,6 +1058,7 @@ typedef struct
 {
     c89thrd_start_t func;
     void* arg;
+    c89thread_entry_exit_callbacks entryExitCallbacks;
     c89thread_allocation_callbacks allocationCallbacks;
     int usingCustomAllocator;
 } c89thrd_start_data_posix;
@@ -1003,20 +1066,33 @@ typedef struct
 static void* c89thrd_start_posix(void* pUserData)
 {
     c89thrd_start_data_posix* pStartData = (c89thrd_start_data_posix*)pUserData;
+    c89thread_entry_exit_callbacks entryExitCallbacks;
     c89thrd_start_t func;
     void* arg;
+    void* result;
+
+    entryExitCallbacks = pStartData->entryExitCallbacks;
+    if (entryExitCallbacks.onEntry != NULL) {
+        entryExitCallbacks.onEntry(entryExitCallbacks.pUserData);
+    }
 
     /* Make sure we make a copy of the start data here. That way we can free pStartData straight away (it was allocated in c89thrd_create()). */
     func = pStartData->func;
     arg  = pStartData->arg;
 
     /* We should free the data pointer before entering into the start function. That way when c89thrd_exit() is called we don't leak. */
-    c89thread_free(pStartData, c89thread_allocation_type_general, (pStartData->usingCustomAllocator) ? NULL : &pStartData->allocationCallbacks);
+    c89thread_free(pStartData, (pStartData->usingCustomAllocator) ? NULL : &pStartData->allocationCallbacks);
 
-    return (void*)(c89thread_intptr)func(arg);
+    result = (void*)(c89thread_intptr)func(arg);
+
+    if (entryExitCallbacks.onExit != NULL) {
+        entryExitCallbacks.onExit(entryExitCallbacks.pUserData);
+    }
+
+    return result;
 }
 
-int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89thread_allocation_callbacks* pAllocationCallbacks)
+int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89thread_entry_exit_callbacks* pEntryExitCallbacks, const c89thread_allocation_callbacks* pAllocationCallbacks)
 {
     int result;
     c89thrd_start_data_posix* pData;
@@ -1032,7 +1108,7 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
         return c89thrd_error;
     }
 
-    pData = (c89thrd_start_data_posix*)c89thread_malloc(sizeof(*pData), c89thread_allocation_type_general, pAllocationCallbacks);   /* <-- This will be freed when c89thrd_start_posix() is entered. */
+    pData = (c89thrd_start_data_posix*)c89thread_malloc(sizeof(*pData), pAllocationCallbacks);   /* <-- This will be freed when c89thrd_start_posix() is entered. */
     if (pData == NULL) {
         return c89thrd_nomem;
     }
@@ -1040,11 +1116,20 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
     pData->func = func;
     pData->arg  = arg;
 
+    if (pEntryExitCallbacks != NULL) {
+        pData->entryExitCallbacks = *pEntryExitCallbacks;
+    } else {
+        pData->entryExitCallbacks.onEntry   = NULL;
+        pData->entryExitCallbacks.onExit    = NULL;
+        pData->entryExitCallbacks.pUserData = NULL;
+    }
+
     if (pAllocationCallbacks != NULL) {
         pData->allocationCallbacks  = *pAllocationCallbacks;
         pData->usingCustomAllocator = 1;
     } else {
         pData->allocationCallbacks.onMalloc  = NULL;
+        pData->allocationCallbacks.onRealloc = NULL;
         pData->allocationCallbacks.onFree    = NULL;
         pData->allocationCallbacks.pUserData = NULL;
         pData->usingCustomAllocator = 0;
@@ -1052,7 +1137,7 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
 
     result = pthread_create(&thread, NULL, c89thrd_start_posix, pData);
     if (result != 0) {
-        c89thread_free(pData, c89thread_allocation_type_general, pAllocationCallbacks);
+        c89thread_free(pData, pAllocationCallbacks);
         return c89thrd_result_from_errno(errno);
     }
 
@@ -1063,7 +1148,7 @@ int c89thrd_create_ex(c89thrd_t* thr, c89thrd_start_t func, void* arg, const c89
 
 int c89thrd_create(c89thrd_t* thr, c89thrd_start_t func, void* arg)
 {
-    return c89thrd_create_ex(thr, func, arg, NULL);
+    return c89thrd_create_ex(thr, func, arg, NULL, NULL);
 }
 
 int c89thrd_equal(c89thrd_t lhs, c89thrd_t rhs)
@@ -1222,7 +1307,7 @@ int c89mtx_init(c89mtx_t* mutex, int type)
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_NORMAL);     /* Will deadlock. Consistent with Win32. */
     }
 
-    result = pthread_mutex_init(mutex, &attr);
+    result = pthread_mutex_init((pthread_mutex_t*)mutex, &attr);
     pthread_mutexattr_destroy(&attr);
 
     if (result != 0) {
@@ -1238,7 +1323,7 @@ void c89mtx_destroy(c89mtx_t* mutex)
         return;
     }
 
-    pthread_mutex_destroy(mutex);
+    pthread_mutex_destroy((pthread_mutex_t*)mutex);
 }
 
 int c89mtx_lock(c89mtx_t* mutex)
@@ -1249,7 +1334,7 @@ int c89mtx_lock(c89mtx_t* mutex)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_lock(mutex);
+    result = pthread_mutex_lock((pthread_mutex_t*)mutex);
     if (result != 0) {
         return c89thrd_error;
     }
@@ -1266,7 +1351,7 @@ int c89mtx_lock(c89mtx_t* mutex)
 static int c89pthread_mutex_timedlock(pthread_mutex_t* mutex, const struct timespec* time_point)
 {
 #if defined(__USE_XOPEN2K) && !defined(__APPLE__)
-    return pthread_mutex_timedlock(mutex, time_point);
+    return pthread_mutex_timedlock((pthread_mutex_t*)mutex, time_point);
 #else
     /*
     Fallback implementation for when pthread_mutex_timedlock() is not avaialble. This is just a
@@ -1283,7 +1368,7 @@ static int c89pthread_mutex_timedlock(pthread_mutex_t* mutex, const struct times
     }
 
     for (;;) {
-        result = pthread_mutex_trylock(mutex);
+        result = pthread_mutex_trylock((pthread_mutex_t*)mutex);
         if (result == EBUSY) {
             struct timespec tsNow;
             c89timespec_get(&tsNow, TIME_UTC);
@@ -1321,7 +1406,7 @@ int c89mtx_timedlock(c89mtx_t* mutex, const struct timespec* time_point)
         return c89thrd_error;
     }
 
-    result = c89pthread_mutex_timedlock(mutex, time_point);
+    result = c89pthread_mutex_timedlock((pthread_mutex_t*)mutex, time_point);
     if (result != 0) {
         if (result == ETIMEDOUT) {
             return c89thrd_timedout;
@@ -1341,7 +1426,7 @@ int c89mtx_trylock(c89mtx_t* mutex)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_trylock(mutex);
+    result = pthread_mutex_trylock((pthread_mutex_t*)mutex);
     if (result != 0) {
         if (result == EBUSY) {
             return c89thrd_busy;
@@ -1361,7 +1446,7 @@ int c89mtx_unlock(c89mtx_t* mutex)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_unlock(mutex);
+    result = pthread_mutex_unlock((pthread_mutex_t*)mutex);
     if (result != 0) {
         return c89thrd_error;
     }
@@ -1379,7 +1464,7 @@ int c89cnd_init(c89cnd_t* cnd)
         return c89thrd_error;
     }
 
-    result = pthread_cond_init(cnd, NULL);
+    result = pthread_cond_init((pthread_cond_t*)cnd, NULL);
     if (result != 0) {
         return c89thrd_error;
     }
@@ -1393,7 +1478,7 @@ void c89cnd_destroy(c89cnd_t* cnd)
         return;
     }
 
-    pthread_cond_destroy(cnd);
+    pthread_cond_destroy((pthread_cond_t*)cnd);
 }
 
 int c89cnd_signal(c89cnd_t* cnd)
@@ -1404,7 +1489,7 @@ int c89cnd_signal(c89cnd_t* cnd)
         return c89thrd_error;
     }
 
-    result = pthread_cond_signal(cnd);
+    result = pthread_cond_signal((pthread_cond_t*)cnd);
     if (result != 0) {
         return c89thrd_error;
     }
@@ -1420,7 +1505,7 @@ int c89cnd_broadcast(c89cnd_t* cnd)
         return c89thrd_error;
     }
 
-    result = pthread_cond_broadcast(cnd);
+    result = pthread_cond_broadcast((pthread_cond_t*)cnd);
     if (result != 0) {
         return c89thrd_error;
     }
@@ -1436,7 +1521,7 @@ int c89cnd_wait(c89cnd_t* cnd, c89mtx_t* mtx)
         return c89thrd_error;
     }
 
-    result = pthread_cond_wait(cnd, mtx);
+    result = pthread_cond_wait((pthread_cond_t*)cnd, (pthread_mutex_t*)mtx);
     if (result != 0) {
         return c89thrd_error;
     }
@@ -1452,7 +1537,7 @@ int c89cnd_timedwait(c89cnd_t* cnd, c89mtx_t* mtx, const struct timespec* time_p
         return c89thrd_error;
     }
 
-    result = pthread_cond_timedwait(cnd, mtx, time_point);
+    result = pthread_cond_timedwait((pthread_cond_t*)cnd, (pthread_mutex_t*)mtx, time_point);
     if (result != 0) {
         if (result == ETIMEDOUT) {
             return c89thrd_timedout;
@@ -1477,14 +1562,14 @@ int c89sem_init(c89sem_t* sem, int value, int valueMax)
     sem->value    = value;
     sem->valueMax = valueMax;
 
-    result = pthread_mutex_init(&sem->lock, NULL);
+    result = pthread_mutex_init((pthread_mutex_t*)&sem->lock, NULL);
     if (result != 0) {
         return c89thrd_result_from_errno(result);  /* Failed to create mutex. */
     }
 
-    result = pthread_cond_init(&sem->cond, NULL);
+    result = pthread_cond_init((pthread_cond_t*)&sem->cond, NULL);
     if (result != 0) {
-        pthread_mutex_destroy(&sem->lock);
+        pthread_mutex_destroy((pthread_mutex_t*)&sem->lock);
         return c89thrd_result_from_errno(result);  /* Failed to create condition variable. */
     }
 
@@ -1497,8 +1582,8 @@ void c89sem_destroy(c89sem_t* sem)
         return;
     }
 
-    pthread_cond_destroy(&sem->cond);
-    pthread_mutex_destroy(&sem->lock);
+    pthread_cond_destroy((pthread_cond_t*)&sem->cond);
+    pthread_mutex_destroy((pthread_mutex_t*)&sem->lock);
 }
 
 int c89sem_wait(c89sem_t* sem)
@@ -1509,18 +1594,18 @@ int c89sem_wait(c89sem_t* sem)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_lock(&sem->lock);
+    result = pthread_mutex_lock((pthread_mutex_t*)&sem->lock);
     if (result != 0) {
         return c89thrd_error;
     }
 
     /* We need to wait on a condition variable before escaping. We can't return from this function until the semaphore has been signaled. */
     while (sem->value == 0) {
-        pthread_cond_wait(&sem->cond, &sem->lock);
+        pthread_cond_wait((pthread_cond_t*)&sem->cond, (pthread_mutex_t*)&sem->lock);
     }
 
     sem->value -= 1;
-    pthread_mutex_unlock(&sem->lock);
+    pthread_mutex_unlock((pthread_mutex_t*)&sem->lock);
 
     return c89thrd_success;
 }
@@ -1533,7 +1618,7 @@ int c89sem_timedwait(c89sem_t* sem, const struct timespec* time_point)
         return c89thrd_error;
     }
 
-    result = c89pthread_mutex_timedlock(&sem->lock, time_point);
+    result = c89pthread_mutex_timedlock((pthread_mutex_t*)&sem->lock, time_point);
     if (result != 0) {
         if (result == ETIMEDOUT) {
             return c89thrd_timedout;
@@ -1544,16 +1629,16 @@ int c89sem_timedwait(c89sem_t* sem, const struct timespec* time_point)
 
     /* We need to wait on a condition variable before escaping. We can't return from this function until the semaphore has been signaled. */
     while (sem->value == 0) {
-        result = pthread_cond_timedwait(&sem->cond, &sem->lock, time_point);
+        result = pthread_cond_timedwait((pthread_cond_t*)&sem->cond, (pthread_mutex_t*)&sem->lock, time_point);
         if (result == ETIMEDOUT) {
-            pthread_mutex_unlock(&sem->lock);
+            pthread_mutex_unlock((pthread_mutex_t*)&sem->lock);
             return c89thrd_timedout;
         }
     }
 
     sem->value -= 1;
 
-    pthread_mutex_unlock(&sem->lock);
+    pthread_mutex_unlock((pthread_mutex_t*)&sem->lock);
     return c89thrd_success;
 }
 
@@ -1565,19 +1650,19 @@ int c89sem_post(c89sem_t* sem)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_lock(&sem->lock);
+    result = pthread_mutex_lock((pthread_mutex_t*)&sem->lock);
     if (result != 0) {
         return c89thrd_error;
     }
 
     if (sem->value < sem->valueMax) {
         sem->value += 1;
-        pthread_cond_signal(&sem->cond);
+        pthread_cond_signal((pthread_cond_t*)&sem->cond);
     } else {
         result = c89thrd_error;
     }
 
-    pthread_mutex_unlock(&sem->lock);
+    pthread_mutex_unlock((pthread_mutex_t*)&sem->lock);
     return c89thrd_success;
 }
 
@@ -1593,14 +1678,14 @@ int c89evnt_init(c89evnt_t* evnt)
 
     evnt->value = 0;
 
-    result = pthread_mutex_init(&evnt->lock, NULL);
+    result = pthread_mutex_init((pthread_mutex_t*)&evnt->lock, NULL);
     if (result != 0) {
         return c89thrd_result_from_errno(result);  /* Failed to create mutex. */
     }
 
-    result = pthread_cond_init(&evnt->cond, NULL);
+    result = pthread_cond_init((pthread_cond_t*)&evnt->cond, NULL);
     if (result != 0) {
-        pthread_mutex_destroy(&evnt->lock);
+        pthread_mutex_destroy((pthread_mutex_t*)&evnt->lock);
         return c89thrd_result_from_errno(result);  /* Failed to create condition variable. */
     }
 
@@ -1613,8 +1698,8 @@ void c89evnt_destroy(c89evnt_t* evnt)
         return;
     }
 
-    pthread_cond_destroy(&evnt->cond);
-    pthread_mutex_destroy(&evnt->lock);
+    pthread_cond_destroy((pthread_cond_t*)&evnt->cond);
+    pthread_mutex_destroy((pthread_mutex_t*)&evnt->lock);
 }
 
 int c89evnt_wait(c89evnt_t* evnt)
@@ -1625,17 +1710,17 @@ int c89evnt_wait(c89evnt_t* evnt)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_lock(&evnt->lock);
+    result = pthread_mutex_lock((pthread_mutex_t*)&evnt->lock);
     if (result != 0) {
         return c89thrd_error;
     }
 
     while (evnt->value == 0) {
-        pthread_cond_wait(&evnt->cond, &evnt->lock);
+        pthread_cond_wait((pthread_cond_t*)&evnt->cond, (pthread_mutex_t*)&evnt->lock);
     }
     evnt->value = 0;  /* Auto-reset. */
 
-    pthread_mutex_unlock(&evnt->lock);
+    pthread_mutex_unlock((pthread_mutex_t*)&evnt->lock);
     return c89thrd_success;
 }
 
@@ -1647,7 +1732,7 @@ int c89evnt_timedwait(c89evnt_t* evnt, const struct timespec* time_point)
         return c89thrd_error;
     }
 
-    result = c89pthread_mutex_timedlock(&evnt->lock, time_point);
+    result = c89pthread_mutex_timedlock((pthread_mutex_t*)&evnt->lock, time_point);
     if (result != 0) {
         if (result == ETIMEDOUT) {
             return c89thrd_timedout;
@@ -1657,15 +1742,15 @@ int c89evnt_timedwait(c89evnt_t* evnt, const struct timespec* time_point)
     }
 
     while (evnt->value == 0) {
-        result = pthread_cond_timedwait(&evnt->cond, &evnt->lock, time_point);
+        result = pthread_cond_timedwait((pthread_cond_t*)&evnt->cond, (pthread_mutex_t*)&evnt->lock, time_point);
         if (result == ETIMEDOUT) {
-            pthread_mutex_unlock(&evnt->lock);
+            pthread_mutex_unlock((pthread_mutex_t*)&evnt->lock);
             return c89thrd_timedout;
         }
     }
     evnt->value = 0;  /* Auto-reset. */
 
-    pthread_mutex_unlock(&evnt->lock);
+    pthread_mutex_unlock((pthread_mutex_t*)&evnt->lock);
     return c89thrd_success;
 }
 
@@ -1677,31 +1762,25 @@ int c89evnt_signal(c89evnt_t* evnt)
         return c89thrd_error;
     }
 
-    result = pthread_mutex_lock(&evnt->lock);
+    result = pthread_mutex_lock((pthread_mutex_t*)&evnt->lock);
     if (result != 0) {
         return c89thrd_error;
     }
 
     evnt->value = 1;
-    pthread_cond_signal(&evnt->cond);
+    pthread_cond_signal((pthread_cond_t*)&evnt->cond);
 
-    pthread_mutex_unlock(&evnt->lock);
+    pthread_mutex_unlock((pthread_mutex_t*)&evnt->lock);
     return c89thrd_success;
 }
 #endif
 
 
 #if defined(_WIN32)
-
-/* We'll need windows.h for a few timing things here. Sorry. */
-#if !defined(C89THREAD_WIN32)
-#include <windows.h>
-#endif
-
 int c89timespec_get(struct timespec* ts, int base)
 {
     FILETIME ft;
-    LONGLONG currentMilliseconds;
+    LONGLONG current100Nanoseconds;
 
     if (ts == NULL) {
         return 0;   /* 0 = error. */
@@ -1716,11 +1795,11 @@ int c89timespec_get(struct timespec* ts, int base)
     }
 
     GetSystemTimeAsFileTime(&ft);
-    currentMilliseconds = (((LONGLONG)ft.dwHighDateTime << 32) | (LONGLONG)ft.dwLowDateTime) / 10000;
-    currentMilliseconds = currentMilliseconds - ((LONGLONG)116444736 * 100000); /* Windows to Unix epoch. Normal value is 11644473600000LL, but VC6 doesn't like 64-bit constants. */
+    current100Nanoseconds = (((LONGLONG)ft.dwHighDateTime << 32) | (LONGLONG)ft.dwLowDateTime);
+    current100Nanoseconds = current100Nanoseconds - ((LONGLONG)116444736 * 1000000000); /* Windows to Unix epoch. Normal value is 116444736000000000LL, but VC6 doesn't like 64-bit constants. */
 
-    ts->tv_sec  = (time_t)(currentMilliseconds / 1000);
-    ts->tv_nsec =  (long)((currentMilliseconds - (ts->tv_sec * 1000)) * 1000000);
+    ts->tv_sec  = (time_t)(current100Nanoseconds / 10000000);
+    ts->tv_nsec =  (long)((current100Nanoseconds - (ts->tv_sec * 10000000)) * 100);
 
     return base;
 }
@@ -1744,34 +1823,38 @@ int c89timespec_get(struct timespec* ts, int base)
         * If _POSIX_C_SOURCE >= 199309L, use clock_gettime(CLOCK_REALTIME, ...); else
         * Fall back to gettimeofday().
     */
-#if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__APPLE__)
-    return timespec_get(ts, base);
-#else
-    if (base != TIME_UTC) {
-        return 0;   /* Only TIME_UTC is supported. 0 = error. */
-    }
-
-    #if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 199309L
+    #if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__APPLE__)
     {
-        if (clock_gettime(CLOCK_REALTIME, ts) != 0) {
-            return 0;   /* Failed to retrieve the time. 0 = error. */
-        }
-
-        /* Getting here means we were successful. On success, need to return base (strange...) */
-        return base;
+        return timespec_get(ts, base);
     }
     #else
     {
-        struct timeval tv;
-        if (gettimeofday(&tv, NULL) != 0) {
-            return 0;   /* Failed to retrieve the time. 0 = error. */
+        if (base != TIME_UTC) {
+            return 0;   /* Only TIME_UTC is supported. 0 = error. */
         }
 
-        *ts = c89timespec_from_timeval(&tv);
-        return base;
+        #if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 199309L
+        {
+            if (clock_gettime(CLOCK_REALTIME, ts) != 0) {
+                return 0;   /* Failed to retrieve the time. 0 = error. */
+            }
+
+            /* Getting here means we were successful. On success, need to return base (strange...) */
+            return base;
+        }
+        #else
+        {
+            struct timeval tv;
+            if (gettimeofday(&tv, NULL) != 0) {
+                return 0;   /* Failed to retrieve the time. 0 = error. */
+            }
+
+            *ts = c89timespec_from_timeval(&tv);
+            return base;
+        }
+        #endif  /* _POSIX_C_SOURCE >= 199309L */
     }
-    #endif  /* _POSIX_C_SOURCE >= 199309L */
-#endif  /* C11 */
+    #endif  /* C11 */
 }
 #endif
 
@@ -1886,53 +1969,82 @@ int c89thrd_sleep_milliseconds(int milliseconds)
 Memory Management
 */
 static c89thread_allocation_callbacks g_c89thread_AllocationCallbacks;
+static int g_c89thread_HasGlobalAllocationCallbacks = 0;
 
-void c89thread_set_allocation_callbacks(const c89thread_allocation_callbacks* pCallbacks)
+void c89thread_set_allocation_callbacks(const c89thread_allocation_callbacks* pAllocationCallbacks)
 {
-    if (pCallbacks == NULL) {
+    if (pAllocationCallbacks == NULL) {
         g_c89thread_AllocationCallbacks.pUserData = NULL;
         g_c89thread_AllocationCallbacks.onMalloc  = NULL;
+        g_c89thread_AllocationCallbacks.onRealloc = NULL;
         g_c89thread_AllocationCallbacks.onFree    = NULL;
+        g_c89thread_HasGlobalAllocationCallbacks  = 0;
     } else {
-        g_c89thread_AllocationCallbacks = *pCallbacks;
+        g_c89thread_AllocationCallbacks = *pAllocationCallbacks;
+        g_c89thread_HasGlobalAllocationCallbacks = 1;
     }
 }
 
-void* c89thread_malloc(size_t sz, c89thread_allocation_type type, const c89thread_allocation_callbacks* pCallbacks)
+const c89thread_allocation_callbacks* c89thread_choose_allocation_callbacks(const c89thread_allocation_callbacks* pAllocationCallbacks)
 {
-    if (pCallbacks != NULL) {
-        if (pCallbacks->onMalloc != NULL) {
-            return pCallbacks->onMalloc(sz, type, pCallbacks->pUserData);
+    if (pAllocationCallbacks != NULL) {
+        return pAllocationCallbacks;
+    }
+
+    if (g_c89thread_HasGlobalAllocationCallbacks) {
+        return &g_c89thread_AllocationCallbacks;
+    }
+
+    /* Don't have local nor global allocation callbacks. */
+    return NULL;
+}
+
+void* c89thread_malloc(size_t sz, const c89thread_allocation_callbacks* pAllocationCallbacks)
+{
+    pAllocationCallbacks = c89thread_choose_allocation_callbacks(pAllocationCallbacks);
+
+    if (pAllocationCallbacks != NULL) {
+        if (pAllocationCallbacks->onMalloc != NULL) {
+            return pAllocationCallbacks->onMalloc(sz, pAllocationCallbacks->pUserData);
         } else {
-            return C89THREAD_MALLOC(sz);
+            return NULL;    /* Do not fall back to default implementation. */
         }
     } else {
-        if (g_c89thread_AllocationCallbacks.onMalloc != NULL) {
-            return g_c89thread_AllocationCallbacks.onMalloc(sz, type, g_c89thread_AllocationCallbacks.pUserData);
-        } else {
-            return C89THREAD_MALLOC(sz);
-        }
+        return C89THREAD_MALLOC(sz);
     }
 }
 
-void c89thread_free(void* p, c89thread_allocation_type type, const c89thread_allocation_callbacks* pCallbacks)
+void* c89thread_realloc(void* p, size_t sz, const c89thread_allocation_callbacks* pAllocationCallbacks)
+{
+    pAllocationCallbacks = c89thread_choose_allocation_callbacks(pAllocationCallbacks);
+
+    if (pAllocationCallbacks != NULL) {
+        if (pAllocationCallbacks->onRealloc != NULL) {
+            return pAllocationCallbacks->onRealloc(p, sz, pAllocationCallbacks->pUserData);
+        } else {
+            return NULL;    /* Do not fall back to default implementation. */
+        }
+    } else {
+        return C89THREAD_REALLOC(p, sz);
+    }
+}
+
+void c89thread_free(void* p, const c89thread_allocation_callbacks* pAllocationCallbacks)
 {
     if (p == NULL) {
         return;
     }
 
-    if (pCallbacks != NULL) {
-        if (pCallbacks->onFree != NULL) {
-            pCallbacks->onFree(p, type, pCallbacks->pUserData);
+    pAllocationCallbacks = c89thread_choose_allocation_callbacks(pAllocationCallbacks);
+
+    if (pAllocationCallbacks != NULL) {
+        if (pAllocationCallbacks->onFree != NULL) {
+            pAllocationCallbacks->onFree(p, pAllocationCallbacks->pUserData);
         } else {
-            C89THREAD_FREE(p);
+            return; /* Do not fall back to default implementation. */
         }
     } else {
-        if (g_c89thread_AllocationCallbacks.onFree != NULL) {
-            g_c89thread_AllocationCallbacks.onFree(p, type, g_c89thread_AllocationCallbacks.pUserData);
-        } else {
-            C89THREAD_FREE(p);
-        }
+        C89THREAD_FREE(p);
     }
 }
 #endif /* C89THREAD_IMPLEMENTATION */
