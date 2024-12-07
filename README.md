@@ -370,7 +370,7 @@ int main() {
 
 # Updates
 
-- **15-Nov-2022**: Introduce `MCO_USE_VMEM_ALLOCATOR` option for allocating thousands of coroutines with low memory footprint, this include breaking changes in the allocator API.
+- **15-Nov-2023**: Introduce `MCO_USE_VMEM_ALLOCATOR` option for allocating thousands of coroutines with low memory footprint, this include breaking changes in the allocator API.
 - **7-Jan-2023**: Fix 128-bit XMM registers not being fully saved on Windows.
 - **08-Jun-2022**: Minicoro has been awarded by the [Icculus Microgrant 2021](https://icculus.org/microgrant/), thanks @icculus for supporting open source work.
 - **26-Jan-2022**: Added support for WebAssembly outside the WebBrowser using Binaryen asyncify pass.
@@ -393,10 +393,8 @@ int main() {
 
 # Donation
 
-I'm a full-time open source developer.
-Any amount of the donation will be appreciated and could bring me encouragement to keep supporting this and other open source projects.
-
-[![Become a Patron](https://c5.patreon.com/external/logo/become_a_patron_button.png)](https://www.patreon.com/edubart)
+I'm a full-time open source developer, any amount of the donation through my GitHub will be appreciated and could bring me encouragement to keep supporting this and other open source projects.
+I may accept one-time sponsorships for small features or minor enhancements aligned with the project goals, in this case contact me.
 
 # License
 
